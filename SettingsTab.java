@@ -1,6 +1,6 @@
 import javafx.application.Platform;
 import javafx.scene.control.*;
-import javafx.scene.layout.*;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import org.yaml.snakeyaml.Yaml;
 import java.io.*;
@@ -11,11 +11,7 @@ public class SettingsTab {
     private static final String CURRENT_VERSION = "1.0.0";
     private static final int PORT = 12345;
     private static String userUUID = UUID.randomUUID().toString();
-    private static String userName = "User_" + userUUID.substring(0, 8);
-    private static String avatarPath = "";
     private TextArea updateNotesArea;
-    private TextField userNameField;
-    private TextField speedLimitField;
 
     public Tab createTab() {
         Tab tab = new Tab(getResourceString("settings_tab"));
@@ -24,10 +20,10 @@ public class SettingsTab {
         updateNotesArea = new TextArea();
         updateNotesArea.setEditable(false);
         Button checkUpdateButton = new Button(getResourceString("check_update"));
-        userNameField = new TextField(userName);
+        TextField userNameField = new TextField(MainWindow.userName);
         Button updateProfileButton = new Button(getResourceString("update_profile"));
         Button chooseAvatarButton = new Button(getResourceString("choose_avatar"));
-        speedLimitField = new TextField("0");
+        TextField speedLimitField = new TextField("0");
         speedLimitField.setPromptText(getResourceString("speed_limit_prompt"));
         Button applySpeedLimitButton = new Button(getResourceString("apply_speed_limit"));
         ComboBox<String> languageComboBox = new ComboBox<>();
@@ -39,6 +35,8 @@ public class SettingsTab {
         themeComboBox.setValue("Light");
         Button applyThemeButton = new Button(getResourceString("apply_theme"));
         Button exportLogButton = new Button(getResourceString("export_log"));
+        TextField savePathField = new TextField(MainWindow.savePath);
+        Button chooseSavePathButton = new Button(getResourceString("choose_save_path"));
 
         VBox layout = new VBox(10,
                 new Label(getResourceString("update")), checkUpdateButton, new Label(getResourceString("patch_notes")), updateNotesArea,
@@ -46,16 +44,18 @@ public class SettingsTab {
                 new Label(getResourceString("speed_limit")), speedLimitField, applySpeedLimitButton,
                 new Label(getResourceString("language")), languageComboBox, applyLanguageButton,
                 new Label(getResourceString("theme")), themeComboBox, applyThemeButton,
-                new Label(getResourceString("log_backup")), exportLogButton);
+                new Label(getResourceString("log_backup")), exportLogButton,
+                new Label(getResourceString("save_path")), savePathField, chooseSavePathButton);
         tab.setContent(layout);
 
         checkUpdateButton.setOnAction(e -> checkForUpdates());
-        updateProfileButton.setOnAction(e -> updateProfile());
+        updateProfileButton.setOnAction(e -> updateProfile(userNameField.getText()));
         chooseAvatarButton.setOnAction(e -> chooseAvatar());
         applySpeedLimitButton.setOnAction(e -> applySpeedLimit());
         applyLanguageButton.setOnAction(e -> applyLanguage(languageComboBox.getValue()));
         applyThemeButton.setOnAction(e -> applyTheme(themeComboBox.getValue()));
         exportLogButton.setOnAction(e -> exportLog());
+        chooseSavePathButton.setOnAction(e -> chooseSavePath(savePathField));
 
         return tab;
     }
@@ -122,12 +122,9 @@ public class SettingsTab {
         return parts1.length - parts2.length;
     }
 
-    private void updateProfile() {
-        userName = userNameField.getText().trim();
-        if (userName.isEmpty()) {
-            userName = "User_" + userUUID.substring(0, 8);
-        }
-        Platform.runLater(() -> updateNotesArea.setText(getResourceString("profile_updated") + userName));
+    private void updateProfile(String newName) {
+        MainWindow.updateUserName(newName.trim().isEmpty() ? "User_" + userUUID.substring(0, 8) : newName);
+        Platform.runLater(() -> updateNotesArea.setText(getResourceString("profile_updated") + MainWindow.userName));
     }
 
     private void chooseAvatar() {
@@ -135,8 +132,8 @@ public class SettingsTab {
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg"));
         File file = fileChooser.showOpenDialog(null);
         if (file != null) {
-            avatarPath = file.getAbsolutePath();
-            Platform.runLater(() -> updateNotesArea.setText(getResourceString("avatar_updated") + avatarPath));
+            MainWindow.updateAvatarPath(file.getAbsolutePath());
+            Platform.runLater(() -> updateNotesArea.setText(getResourceString("avatar_updated") + file.getAbsolutePath()));
         }
     }
 
@@ -153,7 +150,6 @@ public class SettingsTab {
     private void applyLanguage(String lang) {
         Locale.setDefault(new Locale(lang));
         Platform.runLater(() -> updateNotesArea.setText(getResourceString("language_applied")));
-        // UI 갱신을 위해 애플리케이션 재시작 필요
     }
 
     private void applyTheme(String theme) {
@@ -183,6 +179,16 @@ public class SettingsTab {
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private void chooseSavePath(TextField savePathField) {
+        DirectoryChooser dirChooser = new DirectoryChooser();
+        File dir = dirChooser.showDialog(null);
+        if (dir != null) {
+            MainWindow.setSavePath(dir.getAbsolutePath());
+            savePathField.setText(dir.getAbsolutePath());
+            Platform.runLater(() -> updateNotesArea.setText(getResourceString("save_path_updated") + dir.getAbsolutePath()));
         }
     }
 }
