@@ -8,6 +8,14 @@ src/
 │   │   │   ├── main/
 │   │   │   │   ├── App.java
 │   │   │   │   ├── MainWindow.java
+│   │   │   │   ├── DeviceManager.java
+│   │   │   │   ├── ChatManager.java
+│   │   │   │   ├── FileTransferManager.java
+│   │   │   │   ├── DatabaseManager.java
+│   │   │   │   ├── SystemTrayManager.java
+│   │   │   │   ├── UIManager.java
+│   │   │   │   ├── SecurityManager.java
+│   │   │   │   ├── StatsManager.java
 │   │   │   ├── settings/
 │   │   │   │   ├── SettingsTab.java
 │   │   │   ├── sync/
