@@ -1,3 +1,7 @@
+package filesharing.settings;
+
+import filesharing.main.App;
+import filesharing.main.MainWindow;
 import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.stage.DirectoryChooser;
@@ -11,6 +15,7 @@ public class SettingsTab {
     private static final String CURRENT_VERSION = "1.0.0";
     private static final int PORT = 12345;
     private static String userUUID = UUID.randomUUID().toString();
+    private static final String DEVELOPER_NAME = "MainDeveloper";
     private TextArea updateNotesArea;
 
     public Tab createTab() {
@@ -68,15 +73,21 @@ public class SettingsTab {
         MainWindow mainWindow = new MainWindow();
         Map<String, String> discoveredDevices = mainWindow.getDiscoveredDevices();
         discoveredDevices.forEach((name, address) -> {
-            try (Socket socket = new Socket(address, PORT);
-                 DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-                 DataInputStream dis = new DataInputStream(socket.getInputStream())) {
+            try (SSLSocket socket = (SSLSocket) MainWindow.sslContext.getSocketFactory().createSocket(address, PORT)) {
+                socket.startHandshake();
+                DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+                DataInputStream dis = new DataInputStream(socket.getInputStream());
                 dos.writeUTF(userUUID);
                 dos.writeUTF("VERSION");
                 dos.writeUTF(CURRENT_VERSION);
+                dos.writeUTF(DEVELOPER_NAME);
                 String remoteVersion = dis.readUTF();
+                String remoteDev = dis.readUTF();
+                if (!remoteDev.equals(DEVELOPER_NAME)) {
+                    Platform.runLater(() -> updateNotesArea.appendText(getResourceString("third_party_warning") + "\n"));
+                }
                 if (compareVersions(remoteVersion, CURRENT_VERSION) > 0) {
-                    requestUpdate(address, remoteVersion);
+                    requestUpdate(address, remoteVersion, remoteDev);
                 } else {
                     Platform.runLater(() -> updateNotesArea.setText(getResourceString("up_to_date") + CURRENT_VERSION));
                 }
@@ -86,15 +97,16 @@ public class SettingsTab {
         });
     }
 
-    private void requestUpdate(String address, String newVersion) {
-        try (Socket socket = new Socket(address, PORT);
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-             DataInputStream dis = new DataInputStream(socket.getInputStream())) {
+    private void requestUpdate(String address, String newVersion, String developer) {
+        try (SSLSocket socket = (SSLSocket) MainWindow.sslContext.getSocketFactory().createSocket(address, PORT)) {
+            socket.startHandshake();
+            DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+            DataInputStream dis = new DataInputStream(socket.getInputStream());
             dos.writeUTF(userUUID);
             dos.writeUTF("UPDATE");
             String patchNotes = dis.readUTF();
             long fileSize = dis.readLong();
-            FileOutputStream fos = new FileOutputStream("update_" + newVersion + ".jar");
+            FileOutputStream fos = new FileOutputStream("update_" + newVersion + "_" + developer + ".jar");
             byte[] buffer = new byte[4096];
             long bytesRead = 0;
             int count;
@@ -105,7 +117,7 @@ public class SettingsTab {
             fos.close();
             Yaml yaml = new Yaml();
             Map<String, Object> notes = yaml.load(patchNotes);
-            Platform.runLater(() -> updateNotesArea.setText(getResourceString("update_completed") + newVersion + "\n" + getResourceString("patch_notes") + ":\n" + notes));
+            Platform.runLater(() -> updateNotesArea.setText(getResourceString("update_completed") + newVersion + " (" + developer + ")\n" + getResourceString("patch_notes") + ":\n" + notes));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -167,12 +179,13 @@ public class SettingsTab {
         File file = fileChooser.showSaveDialog(null);
         if (file != null) {
             try (CSVPrinter printer = new CSVPrinter(new FileWriter(file), CSVFormat.DEFAULT)) {
-                printer.printRecord("ID", "File Name", "Type", "Size", "Timestamp");
+                printer.printRecord("ID", "File Name", "Type", "Size", "Metadata", "Timestamp");
                 try (Connection conn = DriverManager.getConnection("jdbc:sqlite:transfer_log.db")) {
                     ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM transfers");
                     while (rs.next()) {
                         printer.printRecord(rs.getInt("id"), rs.getString("file_name"),
-                                rs.getString("type"), rs.getLong("size"), rs.getString("timestamp"));
+                                rs.getString("type"), rs.getLong("size"),
+                                rs.getString("metadata"), rs.getString("timestamp"));
                     }
                 }
                 Platform.runLater(() -> updateNotesArea.setText(getResourceString("log_exported") + file.getAbsolutePath()));

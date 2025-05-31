@@ -1,9 +1,12 @@
+package filesharing.main;
+
 import javafx.application.Platform;
 import javafx.scene.chart.PieChart;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
+import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javax.jmdns.JmDNS;
@@ -11,15 +14,23 @@ import javax.jmdns.ServiceEvent;
 import javax.jmdns.ServiceListener;
 import java.io.*;
 import java.net.*;
+import java.nio.channels.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.zip.*;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
+import java.awt.PopupMenu;
+import java.awt.MenuItem;
 import java.awt.image.BufferedImage;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 import javax.imageio.ImageIO;
+import javax.net.ssl.*;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import oshi.SystemInfo;
@@ -36,12 +47,14 @@ public class MainWindow {
     private static final String CHAT_DB_URL = "jdbc:sqlite:chat_log.db";
     private static final String USERBOOK_DB_URL = "jdbc:sqlite:userbook.db";
     private static final String TAG_DB_URL = "jdbc:sqlite:tag_log.db";
+    private static final String CONTACT_DB_URL = "jdbc:sqlite:contact.db";
     private static JmDNS jmdns;
-    private static Map<String, String> discoveredDevices = new HashMap<>();
-    private static Map<String, String> deviceStatus = new HashMap<>();
-    private static Set<String> blockedUUIDs = new HashSet<>();
-    private static Map<String, Boolean> userFileBlock = new HashMap<>();
-    private static Map<String, Boolean> userMessageBlock = new HashMap<>();
+    private static Map<String, String> discoveredDevices = new ConcurrentHashMap<>();
+    private static Map<String, String> deviceStatus = new ConcurrentHashMap<>();
+    private static Set<String> blockedUUIDs = ConcurrentHashMap.newKeySet();
+    private static Map<String, Boolean> userFileBlock = new ConcurrentHashMap<>();
+    private static Map<String, Boolean> userMessageBlock = new ConcurrentHashMap<>();
+    private static Map<String, String> contactGrades = new ConcurrentHashMap<>();
     private static String userUUID = UUID.randomUUID().toString();
     private static String userName = "User_" + userUUID.substring(0, 8);
     private static String avatarPath = "";
@@ -49,6 +62,14 @@ public class MainWindow {
     private static long transferSpeedLimit = 0;
     private static String savePath = System.getProperty("user.home") + "/Downloads";
     private static final int CHUNK_SIZE = 8192;
+    private static final int MAX_RETRIES = 3;
+    private static ExecutorService transferExecutor = Executors.newFixedThreadPool(4);
+    private static Map<String, String> emojiMap = loadEmojiMap();
+    private static SSLContext sslContext;
+    private static KeyManagerFactory kmf;
+    private static TrustManagerFactory tmf;
+    private static SecretKeySpec aesKey;
+    private static Map<String, Double> transferProgress = new ConcurrentHashMap<>();
     private ListView<String> deviceListView;
     private TextArea chatArea;
     private TextField chatInput;
@@ -58,6 +79,24 @@ public class MainWindow {
     private ImageView avatarView;
     private static SystemInfo systemInfo = new SystemInfo();
     private static MediaPlayer mediaPlayer;
+
+    static {
+        try {
+            KeyStore ks = KeyStore.getInstance("JKS");
+            ks.load(new FileInputStream("keystore.jks"), "password".toCharArray());
+            kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, "password".toCharArray());
+            tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+            sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+            byte[] keyBytes = new byte[32];
+            new SecureRandom().nextBytes(keyBytes);
+            aesKey = new SecretKeySpec(keyBytes, "AES");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
     public Tab createTab() {
         Tab tab = new Tab(getResourceString("main_tab"));
@@ -77,6 +116,8 @@ public class MainWindow {
         Button viewTagsButton = new Button(getResourceString("view_tags"));
         Button viewStatsButton = new Button(getResourceString("view_stats"));
         Button networkDiagnosticsButton = new Button(getResourceString("network_diagnostics"));
+        Button previewFileButton = new Button(getResourceString("preview_file"));
+        Button manageContactsButton = new Button(getResourceString("manage_contacts"));
         manualIpInput = new TextField();
         manualIpInput.setPromptText(getResourceString("manual_ip_prompt"));
         Button addManualIpButton = new Button(getResourceString("add_manual_ip"));
@@ -91,8 +132,9 @@ public class MainWindow {
                 new Label(getResourceString("chat")), chatArea, chatInput, sendChatButton,
                 sendFileButton, autoAcceptCheckBox, viewLogButton, viewChatLogButton,
                 blockUserButton, manageGroupsButton, viewTagsButton, viewStatsButton,
-                networkDiagnosticsButton, new Label(getResourceString("manual_ip")), manualIpInput,
-                addManualIpButton, progressBar, new Label(getResourceString("avatar")), avatarView);
+                networkDiagnosticsButton, previewFileButton, manageContactsButton,
+                new Label(getResourceString("manual_ip")), manualIpInput, addManualIpButton,
+                progressBar, new Label(getResourceString("avatar")), avatarView);
         tab.setContent(controls);
 
         sendChatButton.setOnAction(e -> sendChat());
@@ -105,8 +147,11 @@ public class MainWindow {
         viewTagsButton.setOnAction(e -> viewTags());
         viewStatsButton.setOnAction(e -> showStats());
         networkDiagnosticsButton.setOnAction(e -> runNetworkDiagnostics());
+        previewFileButton.setOnAction(e -> previewFile());
+        manageContactsButton.setOnAction(e -> manageContacts());
         addManualIpButton.setOnAction(e -> addManualDevice());
         startAutoBackup();
+        startLogCleanup();
 
         try {
             setupMDNS();
@@ -160,14 +205,15 @@ public class MainWindow {
         });
 
         jmdns.registerService(javax.jmdns.ServiceInfo.create(
-                SERVICE_TYPE, userName + "_" + userUUID, PORT, ""));
+                SERVICE_TYPE, userName + "_" + userUUID, PORT, "SSL: true"));
     }
 
     private void startServer() {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+        try (SSLServerSocket serverSocket = (SSLServerSocket) sslContext.getServerSocketFactory().createServerSocket(PORT)) {
+            serverSocket.setNeedClientAuth(true);
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                new Thread(() -> handleClient(clientSocket)).start();
+                Socket socket = serverSocket.accept();
+                transferExecutor.submit(() -> handleClient(socket));
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -176,33 +222,38 @@ public class MainWindow {
 
     private void handleClient(Socket socket) {
         try {
-            DataInputStream dis = new DataInputStream(socket.getInputStream());
+            SSLSocket sslSocket = (SSLSocket) socket;
+            sslSocket.startHandshake();
+            DataInputStream dis = new DataInputStream(sslSocket.getInputStream());
             String uuid = dis.readUTF();
-            if (blockedUUIDs.contains(uuid) || !validateUUID(uuid)) {
+            if (!validateUUID(uuid) || blockedUUIDs.contains(uuid)) {
                 socket.close();
                 return;
             }
-            String type = dis.readUTF();
 
+            String type = dis.readUTF();
             if (type.equals("CHAT") && !userMessageBlock.getOrDefault(uuid, false)) {
-                String message = dis.readUTF();
+                String encryptedMessage = dis.readUTF();
+                String message = decryptMessage(encryptedMessage);
                 logChat(uuid, message, "수신");
-                Platform.runLater(() -> chatArea.appendText(getResourceString("received") + message + "\n"));
+                Platform.runLater(() -> chatArea.appendText(getResourceString("received") + processMessage(message) + "\n"));
                 playNotificationSound();
             } else if (type.equals("FILE") && !userFileBlock.getOrDefault(uuid, false)) {
                 String fileName = dis.readUTF();
                 long fileSize = dis.readLong();
+                String metadata = dis.readUTF();
                 String hash = dis.readUTF();
                 String tags = dis.readUTF();
+                transferProgress.put(fileName, 0.0);
                 Platform.runLater(() -> {
                     if (autoAcceptFiles) {
-                        receiveFile(fileName, fileSize, hash, tags, dis);
+                        receiveFileWithRetry(fileName, fileSize, metadata, hash, tags, sslSocket, dis);
                     } else {
                         Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                                getResourceString("file_receive_prompt") + fileName + " (" + fileSize + " bytes)?");
+                                getResourceString("file_receive_prompt") + fileName + " (" + fileSize + " bytes)\n" + metadata);
                         alert.showAndWait().ifPresent(response -> {
                             if (response.getButtonData().isDefaultButton()) {
-                                receiveFile(fileName, fileSize, hash, tags, dis);
+                                receiveFileWithRetry(fileName, fileSize, metadata, hash, tags, sslSocket, dis);
                             }
                         });
                     }
@@ -210,8 +261,14 @@ public class MainWindow {
             } else if (type.equals("STATUS")) {
                 String name = dis.readUTF();
                 Platform.runLater(() -> deviceStatus.put(name, getResourceString("online")));
+            } else if (type.equals("VERSION")) {
+                String version = dis.readUTF();
+                String devName = dis.readUTF();
+                if (!devName.equals("MainDeveloper")) {
+                    Platform.runLater(() -> notify(getResourceString("third_party_warning")));
+                }
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         } finally {
             try {
@@ -222,43 +279,73 @@ public class MainWindow {
         }
     }
 
-    private void receiveFile(String fileName, long fileSize, String expectedHash, String tags, DataInputStream dis) {
-        try {
-            File saveDir = new File(savePath);
-            if (!saveDir.exists()) saveDir.mkdirs();
-            FileOutputStream fos = new FileOutputStream(new File(saveDir, fileName));
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[CHUNK_SIZE];
-            long bytesRead = 0;
-            int count;
-            long startTime = System.currentTimeMillis();
-            while (bytesRead < fileSize && (count = dis.read(buffer, 0, Math.min(CHUNK_SIZE, (int)(fileSize - bytesRead)))) > 0) {
-                fos.write(buffer, 0, count);
-                digest.update(buffer, 0, count);
-                bytesRead += count;
-                double progress = (double) bytesRead / fileSize;
-                Platform.runLater(() -> progressBar.setProgress(progress));
-                if (transferSpeedLimit > 0) {
-                    throttleTransfer(bytesRead, startTime);
+    private void receiveFileWithRetry(String fileName, long fileSize, String metadata, String expectedHash, String tags, Socket socket, DataInputStream dis) {
+        int attempt = 0;
+        boolean success = false;
+        while (attempt < MAX_RETRIES && !success) {
+            try {
+                attempt++;
+                receiveFile(fileName, fileSize, metadata, expectedHash, tags, dis);
+                success = true;
+            } catch (Exception e) {
+                if (attempt == MAX_RETRIES) {
+                    Platform.runLater(() -> notify(getResourceString("transfer_failed")));
+                    transferProgress.remove(fileName);
+                    return;
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ex) {
+                    ex.printStackTrace();
                 }
             }
-            fos.close();
-            String receivedHash = bytesToHex(digest.digest());
-            if (!receivedHash.equals(expectedHash)) {
-                Platform.runLater(() -> notify(getResourceString("file_integrity_failed")));
-                return;
-            }
-            logTransfer(fileName, "수신", fileSize);
-            logTags(fileName, tags);
-            Platform.runLater(() -> {
-                progressBar.setProgress(0);
-                progressBar.setVisible(false);
-                notify(getResourceString("file_received") + fileName);
-                playNotificationSound();
-            });
-        } catch (Exception e) {
-            e.printStackTrace();
         }
+    }
+
+    private void receiveFile(String fileName, long fileSize, String metadata, String expectedHash, String tags, DataInputStream dis) throws Exception {
+        File saveDir = new File(savePath);
+        if (!saveDir.exists()) saveDir.mkdirs();
+        File outputFile = new File(saveDir, fileName);
+        FileOutputStream fos = new FileOutputStream(outputFile);
+        FileChannel outChannel = fos.getChannel();
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        ByteBuffer buffer = ByteBuffer.allocate(CHUNK_SIZE);
+        long bytesRead = 0;
+        long startTime = System.currentTimeMillis();
+        while (bytesRead < fileSize) {
+            int read = dis.read(buffer.array(), 0, Math.min(CHUNK_SIZE, (int)(fileSize - bytesRead)));
+            if (read == -1) break;
+            buffer.limit(read);
+            outChannel.write(buffer);
+            digest.update(buffer.array(), 0, read);
+            bytesRead += read;
+            buffer.clear();
+            double progress = (double) bytesRead / fileSize;
+            transferProgress.put(fileName, progress);
+            updateTrayMenu();
+            Platform.runLater(() -> progressBar.setProgress(progress));
+            if (transferSpeedLimit > 0) {
+                throttleTransfer(bytesRead, startTime);
+            }
+        }
+        outChannel.close();
+        fos.close();
+        String receivedHash = bytesToHex(digest.digest());
+        if (!receivedHash.equals(expectedHash)) {
+            Platform.runLater(() -> notify(getResourceString("file_integrity_failed")));
+            outputFile.delete();
+            throw new IOException("Integrity check failed");
+        }
+        logTransfer(fileName, "수신", fileSize, metadata);
+        logTags(fileName, tags);
+        transferProgress.remove(fileName);
+        updateTrayMenu();
+        Platform.runLater(() -> {
+            progressBar.setProgress(0);
+            progressBar.setVisible(false);
+            notify(getResourceString("file_received") + fileName);
+            playNotificationSound();
+        });
     }
 
     private void throttleTransfer(long bytesRead, long startTime) {
@@ -274,7 +361,7 @@ public class MainWindow {
         }
     }
 
-    private String bytesToHex(byte[] bytes) {
+    public static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x", b));
@@ -293,16 +380,32 @@ public class MainWindow {
             return;
         }
 
-        try (Socket socket = new Socket(address, PORT);
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
-            dos.writeUTF(userUUID);
-            dos.writeUTF("CHAT");
-            dos.writeUTF(message);
-            logChat(userUUID, message, "전송");
-            Platform.runLater(() -> chatArea.appendText(getResourceString("sent") + message + "\n"));
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        transferExecutor.submit(() -> {
+            int attempt = 0;
+            boolean success = false;
+            while (attempt < MAX_RETRIES && !success) {
+                try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket(address, PORT)) {
+                    socket.startHandshake();
+                    DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+                    dos.writeUTF(userUUID);
+                    dos.writeUTF("CHAT");
+                    dos.writeUTF(encryptMessage(message));
+                    logChat(userUUID, message, "전송");
+                    Platform.runLater(() -> chatArea.appendText(getResourceString("sent") + processMessage(message) + "\n"));
+                    success = true;
+                } catch (Exception e) {
+                    attempt++;
+                    if (attempt == MAX_RETRIES) {
+                        Platform.runLater(() -> notify(getResourceString("transfer_failed")));
+                    }
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            }
+        });
         chatInput.clear();
     }
 
@@ -310,15 +413,16 @@ public class MainWindow {
         try (MulticastSocket socket = new MulticastSocket(MULTICAST_PORT)) {
             InetAddress group = InetAddress.getByName(MULTICAST_ADDRESS);
             socket.joinGroup(group);
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[8192];
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
-                String message = new String(packet.getData(), 0, packet.getLength());
+                String encrypted = new String(packet.getData(), 0, packet.getLength());
+                String message = decryptMessage(encrypted);
                 String senderUUID = message.split(":")[0].split("_")[1].trim();
                 if (!userMessageBlock.getOrDefault(senderUUID, false)) {
                     logChat(senderUUID, message, "수신");
-                    Platform.runLater(() -> chatArea.appendText(getResourceString("group") + message + "\n"));
+                    Platform.runLater(() -> chatArea.appendText(getResourceString("group") + processMessage(message) + "\n"));
                     playNotificationSound();
                 }
             }
@@ -344,65 +448,100 @@ public class MainWindow {
         Optional<String> tags = tagDialog.showAndWait();
 
         FileChooser fileChooser = new FileChooser();
-        File file = fileChooser.showOpenDialog(null);
-        if (file == null) return;
+        List<File> files = fileChooser.showOpenMultipleDialog(null);
+        if (files == null || files.isEmpty()) return;
 
-        try {
-            String fileName;
-            File sendFile;
-            if (file.isDirectory()) {
-                fileName = file.getName() + ".zip";
-                sendFile = new File(fileName);
-                zipFolder(file, sendFile);
-            } else {
-                fileName = file.getName();
-                sendFile = file;
-            }
+        files.sort(Comparator.comparingLong(File::length));
 
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (FileInputStream fis = new FileInputStream(sendFile)) {
-                byte[] buffer = new byte[CHUNK_SIZE]; 
-                int count;
-                while ((count = fis.read(buffer)) > 0) {
-                    digest.update(buffer, 0, count);
+        for (File file : files) {
+            String fileName = file.getName();
+            transferProgress.put(fileName, 0.0);
+            transferExecutor.submit(() -> sendFile(file, address, tags.orElse("")));
+        }
+    }
+
+    private void sendFile(File file, String address, String tags) {
+        int attempt = 0;
+        boolean success = false;
+        while (attempt < MAX_RETRIES && !success) {
+            try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket(address, PORT)) {
+                socket.startHandshake();
+                DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+                FileInputStream fis = new FileInputStream(file);
+                FileChannel inChannel = fis.getChannel();
+
+                String fileName = file.getName();
+                File sendFile = file;
+                if (file.isDirectory()) {
+                    fileName = file.getName() + ".zip";
+                    sendFile = new File(savePath, fileName);
+                    zipFolder(file, sendFile);
                 }
-            }
-            String fileHash = bytesToHex(digest.digest());
 
-            try (Socket socket = new Socket(address, PORT);
-                 DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-                 FileInputStream fis = new FileInputStream(sendFile)) {
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                try (FileInputStream hashFis = new FileInputStream(sendFile)) {
+                    byte[] buffer = new byte[CHUNK_SIZE];
+                    int count;
+                    while ((count = hashFis.read(buffer)) > 0) {
+                        digest.update(buffer, 0, count);
+                    }
+                }
+                String fileHash = bytesToHex(digest.digest());
+                String metadata = String.format("Size: %d bytes, Modified: %s", sendFile.length(), new Date(sendFile.lastModified()));
+
                 dos.writeUTF(userUUID);
                 dos.writeUTF("FILE");
                 dos.writeUTF(fileName);
                 dos.writeLong(sendFile.length());
+                dos.writeUTF(metadata);
                 dos.writeUTF(fileHash);
-                dos.writeUTF(tags.orElse(""));
+                dos.writeUTF(tags);
 
-                byte[] buffer = new byte[CHUNK_SIZE];
+                ByteBuffer buffer = ByteBuffer.allocate(CHUNK_SIZE);
                 long bytesRead = 0;
-                int count;
                 long startTime = System.currentTimeMillis();
                 progressBar.setVisible(true);
-                while ((count = fis.read(buffer)) > 0) {
-                    dos.write(buffer, 0, count);
-                    bytesRead += count;
+                while (bytesRead < sendFile.length()) {
+                    int read = inChannel.read(buffer);
+                    if (read == -1) break;
+                    buffer.flip();
+                    dos.write(buffer.array(), 0, read);
+                    bytesRead += read;
+                    buffer.clear();
                     double progress = (double) bytesRead / sendFile.length();
+                    transferProgress.put(fileName, progress);
+                    updateTrayMenu();
                     Platform.runLater(() -> progressBar.setProgress(progress));
                     if (transferSpeedLimit > 0) {
                         throttleTransfer(bytesRead, startTime);
                     }
                 }
-                logTransfer(fileName, "전송", sendFile.length());
-                logTags(fileName, tags.orElse(""));
+                inChannel.close();
+                fis.close();
+                logTransfer(fileName, "전송", sendFile.length(), metadata);
+                logTags(fileName, tags);
+                transferProgress.remove(fileName);
+                updateTrayMenu();
                 Platform.runLater(() -> {
                     progressBar.setProgress(0);
                     progressBar.setVisible(false);
                     notify(getResourceString("file_sent") + fileName);
                 });
+                success = true;
+                if (sendFile != file) sendFile.delete();
+            } catch (Exception e) {
+                attempt++;
+                if (attempt == MAX_RETRIES) {
+                    Platform.runLater(() -> notify(getResourceString("transfer_failed")));
+                    transferProgress.remove(file.getName());
+                    updateTrayMenu();
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ex) {
+                    ex.printStackTrace();
+                }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
 
@@ -432,11 +571,41 @@ public class MainWindow {
                 BufferedImage image = ImageIO.read(new File("icon.png"));
                 trayIcon = new TrayIcon(image, getResourceString("system_tray_title"));
                 trayIcon.setImageAutoSize(true);
+
+                PopupMenu popup = new PopupMenu();
+                MenuItem showItem = new MenuItem(getResourceString("show_app"));
+                MenuItem exitItem = new MenuItem(getResourceString("exit"));
+                Menu transfersMenu = new Menu(getResourceString("transfers"));
+                popup.add(showItem);
+                popup.add(transfersMenu);
+                popup.add(exitItem);
+                trayIcon.setPopupMenu(popup);
+
+                showItem.addActionListener(e -> Platform.runLater(() -> App.getInstance().getPrimaryStage().show()));
+                exitItem.addActionListener(e -> {
+                    transferExecutor.shutdown();
+                    Platform.exit();
+                    tray.remove(trayIcon);
+                });
+
                 tray.add(trayIcon);
+                updateTrayMenu();
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    private void updateTrayMenu() {
+        if (trayIcon == null) return;
+        PopupMenu popup = trayIcon.getPopupMenu();
+        Menu transfersMenu = (Menu) popup.getItem(1);
+        transfersMenu.removeAll();
+        transferProgress.forEach((fileName, progress) -> {
+            MenuItem item = new MenuItem(String.format("%s: %.0f%%", fileName, progress * 100));
+            item.setEnabled(false);
+            transfersMenu.add(item);
+        });
     }
 
     private void notify(String message) {
@@ -467,7 +636,7 @@ public class MainWindow {
 
     private void initDatabases() {
         try (Connection conn = DriverManager.getConnection(DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, file_name TEXT, type TEXT, size LONG, timestamp TEXT)";
+            String sql = "CREATE TABLE IF NOT EXISTS transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, file_name TEXT, type TEXT, size LONG, metadata TEXT, timestamp TEXT)";
             conn.createStatement().execute(sql);
         } catch (SQLException e) {
             e.printStackTrace();
@@ -490,16 +659,23 @@ public class MainWindow {
         } catch (SQLException e) {
             e.printStackTrace();
         }
+        try (Connection conn = DriverManager.getConnection(CONTACT_DB_URL)) {
+            String sql = "CREATE TABLE IF NOT EXISTS contacts (uuid TEXT PRIMARY KEY, grade TEXT)";
+            conn.createStatement().execute(sql);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 
-    private void logTransfer(String fileName, String type, long size) {
+    private void logTransfer(String fileName, String type, long size, String metadata) {
         try (Connection conn = DriverManager.getConnection(DB_URL)) {
-            String sql = "INSERT INTO transfers (file_name, type, size, timestamp) VALUES (?, ?, ?, ?)";
+            String sql = "INSERT INTO transfers (file_name, type, size, metadata, timestamp) VALUES (?, ?, ?, ?, ?)";
             PreparedStatement pstmt = conn.prepareStatement(sql);
             pstmt.setString(1, fileName);
             pstmt.setString(2, type);
             pstmt.setLong(3, size);
-            pstmt.setString(4, new java.util.Date().toString());
+            pstmt.setString(4, metadata);
+            pstmt.setString(5, new java.util.Date().toString());
             pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
@@ -538,8 +714,9 @@ public class MainWindow {
         try (Connection conn = DriverManager.getConnection(DB_URL)) {
             ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM transfers");
             while (rs.next()) {
-                logView.getItems().add(String.format("%s: %s (%d bytes) at %s",
-                        rs.getString("type"), rs.getString("file_name"), rs.getLong("size"), rs.getString("timestamp")));
+                logView.getItems().add(String.format("%s: %s (%d bytes) at %s\n%s",
+                        rs.getString("type"), rs.getString("file_name"), rs.getLong("size"),
+                        rs.getString("timestamp"), rs.getString("metadata")));
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -666,7 +843,7 @@ public class MainWindow {
 
     private void runNetworkDiagnostics() {
         StringBuilder diagnostics = new StringBuilder();
-        diagnostics.append(getResourceString("network_diagnostics") + ":\n");
+        diagnostics.append(getResourceString("network_diagnostics")).append(":\n");
         NetworkIF[] interfaces = systemInfo.getHardware().getNetworkIFs();
         for (NetworkIF nif : interfaces) {
             diagnostics.append("Interface: ").append(nif.getName()).append("\n");
@@ -684,18 +861,81 @@ public class MainWindow {
         });
     }
 
+    private void previewFile() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg"),
+                new FileChooser.ExtensionFilter("Text", "*.txt"));
+        File file = fileChooser.showOpenDialog(null);
+        if (file == null) return;
+
+        Stage previewStage = new Stage();
+        previewStage.setTitle(getResourceString("file_preview"));
+        if (file.getName().endsWith(".png") || file.getName().endsWith(".jpg")) {
+            Image image = new Image(file.toURI().toString());
+            ImageView imageView = new ImageView(image);
+            imageView.setFitWidth(400);
+            imageView.setPreserveRatio(true);
+            previewStage.setScene(new Scene(new VBox(new Label(file.getName()), imageView)));
+        } else if (file.getName().endsWith(".txt")) {
+            WebView webView = new WebView();
+            try {
+                String content = Files.readString(file.toPath());
+                webView.getEngine().loadContent("<pre>" + content + "</pre>");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            previewStage.setScene(new Scene(new VBox(new Label(file.getName()), webView), 400, 300));
+        }
+        previewStage.show();
+    }
+
+    private void manageContacts() {
+        String target = deviceListView.getSelectionModel().getSelectedItem();
+        if (target == null) {
+            notify(getResourceString("select_device"));
+            return;
+        }
+        String uuid = target.split("_")[1];
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(getResourceString("manage_contacts"));
+        dialog.setHeaderText(getResourceString("set_contact_grade") + target);
+        ComboBox<String> gradeCombo = new ComboBox<>();
+        gradeCombo.getItems().addAll("Green", "Orange", "Red");
+        gradeCombo.setValue(contactGrades.getOrDefault(uuid, "Green"));
+        dialog.getDialogPane().setContent(new VBox(10, new Label(getResourceString("contact_grade")), gradeCombo));
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        dialog.showAndWait().ifPresent(type -> {
+            if (type == ButtonType.OK) {
+                String grade = gradeCombo.getValue();
+                contactGrades.put(uuid, grade);
+                try (Connection conn = DriverManager.getConnection(CONTACT_DB_URL)) {
+                    String sql = "INSERT OR REPLACE INTO contacts (uuid, grade) VALUES (?, ?)";
+                    PreparedStatement pstmt = conn.prepareStatement(sql);
+                    pstmt.setString(1, uuid);
+                    pstmt.setString(2, grade);
+                    pstmt.executeUpdate();
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+                notify(getResourceString("contact_updated") + target + " (" + grade + ")");
+            }
+        });
+    }
+
     private void startAutoBackup() {
         new Thread(() -> {
             while (true) {
                 try {
                     String backupPath = savePath + "/backup_" + System.currentTimeMillis() + ".csv";
                     try (CSVPrinter printer = new CSVPrinter(new FileWriter(backupPath), CSVFormat.DEFAULT)) {
-                        printer.printRecord("ID", "File Name", "Type", "Size", "Timestamp");
+                        printer.printRecord("ID", "File Name", "Type", "Size", "Metadata", "Timestamp");
                         try (Connection conn = DriverManager.getConnection(DB_URL)) {
                             ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM transfers");
                             while (rs.next()) {
                                 printer.printRecord(rs.getInt("id"), rs.getString("file_name"),
-                                        rs.getString("type"), rs.getLong("size"), rs.getString("timestamp"));
+                                        rs.getString("type"), rs.getLong("size"),
+                                        rs.getString("metadata"), rs.getString("timestamp"));
                             }
                         }
                         try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
@@ -709,7 +949,28 @@ public class MainWindow {
                         }
                     }
                     Platform.runLater(() -> notify(getResourceString("auto_backup_completed") + backupPath));
-                    Thread.sleep(3600000); // 1시간마다 백업
+                    Thread.sleep(3600000); // 1시간마다
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    private void startLogCleanup() {
+        new Thread(() -> {
+            while (true) {
+                try {
+                    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+                        String sql = "DELETE FROM transfers WHERE timestamp < datetime('now', '-30 days')";
+                        conn.createStatement().executeUpdate(sql);
+                    }
+                    try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
+                        String sql = "DELETE FROM chats WHERE timestamp < datetime('now', '-30 days')";
+                        conn.createStatement().executeUpdate(sql);
+                    }
+                    Platform.runLater(() -> notify(getResourceString("log_cleanup_completed")));
+                    Thread.sleep(86400000); // 1일마다
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -727,14 +988,15 @@ public class MainWindow {
         discoveredDevices.put(name, ip);
         deviceStatus.put(name, getResourceString("online"));
         deviceListView.getItems().add(name);
-        notify(getResourceString("manual_device_added")(mac) + ip);
+        notify(getResourceString("manual_device_added") + ip);
     }
 
     private void checkDeviceStatus(String address, String name) {
         new Thread(() -> {
             while (true) {
-                try (Socket socket = new Socket()) {
+                try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket()) {
                     socket.connect(new InetSocketAddress(address, PORT), 2000);
+                    socket.startHandshake();
                     try (DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
                         dos.writeUTF(userUUID);
                         dos.writeUTF("STATUS");
@@ -760,12 +1022,59 @@ public class MainWindow {
     private void sendGroupChat(String message) {
         try (DatagramSocket socket = new DatagramSocket()) {
             InetAddress group = InetAddress.getByName(MULTICAST_ADDRESS);
-            byte[] buffer = (userName + "_" + userUUID + ": " + message).getBytes();
+            byte[] buffer = encryptMessage(userName + "_" + userUUID + ": " + message).getBytes();
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length, group, MULTICAST_PORT);
             socket.send(packet);
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private String encryptMessage(String message) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.ENCRYPT_MODE, aesKey);
+            byte[] encrypted = cipher.doFinal(message.getBytes());
+            return Base64.getEncoder().encodeToString(encrypted);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Base64.getEncoder().encodeToString(message.getBytes());
+        }
+    }
+
+    private String decryptMessage(String encrypted) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.DECRYPT_MODE, aesKey);
+            byte[] decrypted = cipher.doFinal(Base64.getDecoder().decode(encrypted));
+            return new String(decrypted);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new String(Base64.getDecoder().decode(encrypted));
+        }
+    }
+
+    private String processMessage(String message) {
+        for (Map.Entry<String, String> entry : emojiMap.entrySet()) {
+            message = message.replace(entry.getKey(), entry.getValue());
+        }
+        return message;
+    }
+
+    private static Map<String, String> loadEmojiMap() {
+        Map<String, String> map = new HashMap<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader("emojis.txt"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("=");
+                if (parts.length == 2) {
+                    map.put(parts[0], parts[1]);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return map;
     }
 
     public Map<String, String> getDiscoveredDevices() {

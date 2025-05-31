@@ -1,0 +1,5 @@
+:smile:=😊
+:sad:=😢
+:heart:=❤️
+:thumbsup:=👍
+:star:=⭐
