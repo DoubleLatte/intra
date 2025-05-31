@@ -1,6 +1,9 @@
 package filesharing.main;
 
+import filesharing.settings.SettingsTab;
 import javafx.application.Platform;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import java.io.*;
@@ -81,7 +84,9 @@ public class ChatManager {
                 if (!databaseManager.isMessageBlocked(senderUUID)) {
                     databaseManager.logChat(senderUUID, message, "수신");
                     Platform.runLater(() -> notify(getResourceString("group") + processMessage(message)));
-                    playNotificationSound();
+                    if (SettingsTab.isNotificationsEnabled()) {
+                        playNotificationSound();
+                    }
                 }
             }
         } catch (IOException e) {
@@ -119,7 +124,7 @@ public class ChatManager {
 
     public void setupMediaPlayer() {
         try {
-            Media sound = new Media(new File("notification.wav").toURI().toString());
+            Media sound = new Media(new File(SettingsTab.getNotificationSoundPath()).toURI().toString());
             mediaPlayer = new MediaPlayer(sound);
         } catch (Exception e) {
             Platform.runLater(() -> notify("Media player setup error: " + e.getMessage()));
@@ -127,7 +132,7 @@ public class ChatManager {
     }
 
     public void playNotificationSound() {
-        if (mediaPlayer != null) {
+        if (mediaPlayer != null && SettingsTab.isNotificationsEnabled()) {
             mediaPlayer.stop();
             mediaPlayer.play();
         }
@@ -157,7 +162,7 @@ public class ChatManager {
     }
 
     private String getResourceString(String key) {
-        return java.util.ResourceBundle.getBundle("messages", java.util.Locale.getDefault()).getString(key);
+        return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void notify(String message) {

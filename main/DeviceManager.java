@@ -3,11 +3,9 @@ package filesharing.main;
 import javax.jmdns.JmDNS;
 import javax.jmdns.ServiceEvent;
 import javax.jmdns.ServiceListener;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.util.Map;
-import java.util.UUID;
+import java.io.*;
+import java.net.*;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import javafx.application.Platform;
 import javax.net.ssl.SSLSocket;
@@ -18,8 +16,10 @@ public class DeviceManager {
     private static JmDNS jmdns;
     private static Map<String, String> discoveredDevices = new ConcurrentHashMap<>();
     private static Map<String, String> deviceStatus = new ConcurrentHashMap<>();
+    private static Map<String, String> userStatuses = new ConcurrentHashMap<>();
     private static String userUUID = UUID.randomUUID().toString();
     private static String userName = "User_" + userUUID.substring(0, 8);
+    private static String userStatus = "Online";
     private final SecurityManager securityManager;
 
     public DeviceManager() {
@@ -40,6 +40,7 @@ public class DeviceManager {
                 Platform.runLater(() -> {
                     discoveredDevices.remove(name);
                     deviceStatus.remove(name);
+                    userStatuses.remove(name);
                     notify(getResourceString("device_removed") + name);
                 });
             }
@@ -51,6 +52,7 @@ public class DeviceManager {
                 Platform.runLater(() -> {
                     discoveredDevices.put(name, address);
                     deviceStatus.put(name, getResourceString("online"));
+                    userStatuses.put(name, "Online");
                     notify(getResourceString("device_info") + name + " (" + address + ")");
                 });
                 checkDeviceStatus(address, name);
@@ -73,8 +75,26 @@ public class DeviceManager {
         }
     }
 
-    private void handleClient(java.net.Socket socket) {
-        // Handled by ChatManager or FileTransferManager
+    private void handleClient(Socket socket) {
+        try (var dis = new DataInputStream(socket.getInputStream());
+             var dos = new DataOutputStream(socket.getOutputStream())) {
+            String uuid = dis.readUTF();
+            if (!securityManager.validateUUID(uuid)) {
+                socket.close();
+                return;
+            }
+            String type = dis.readUTF();
+            if (type.equals("STATUS")) {
+                String name = dis.readUTF();
+                String status = dis.readUTF();
+                Platform.runLater(() -> {
+                    deviceStatus.put(name, getResourceString("online"));
+                    userStatuses.put(name, status);
+                });
+            }
+        } catch (IOException e) {
+            // Handled by ChatManager or FileTransferManager
+        }
     }
 
     public void addManualDevice(String ip, Runnable notifyCallback) {
@@ -85,6 +105,7 @@ public class DeviceManager {
         String name = "Manual_" + ip.replace(".", "_");
         discoveredDevices.put(name, ip);
         deviceStatus.put(name, getResourceString("online"));
+        userStatuses.put(name, "Online");
         notifyCallback.run();
     }
 
@@ -94,12 +115,16 @@ public class DeviceManager {
                 try (SSLSocket socket = securityManager.createSSLSocket()) {
                     socket.connect(new InetSocketAddress(address, PORT), 2000);
                     socket.startHandshake();
-                    try (var dos = new java.io.DataOutputStream(socket.getOutputStream())) {
+                    try (var dos = new DataOutputStream(socket.getOutputStream())) {
                         dos.writeUTF(userUUID);
                         dos.writeUTF("STATUS");
                         dos.writeUTF(userName + "_" + userUUID);
+                        dos.writeUTF(userStatus);
                     }
-                    Platform.runLater(() -> deviceStatus.put(name, getResourceString("online")));
+                    Platform.runLater(() -> {
+                        deviceStatus.put(name, getResourceString("online"));
+                        userStatuses.put(name, userStatuses.getOrDefault(name, "Online"));
+                    });
                 } catch (IOException e) {
                     Platform.runLater(() -> deviceStatus.put(name, getResourceString("offline")));
                 }
@@ -113,7 +138,7 @@ public class DeviceManager {
     }
 
     private String getResourceString(String key) {
-        return java.util.ResourceBundle.getBundle("messages", java.util.Locale.getDefault()).getString(key);
+        return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void notify(String message) {
@@ -128,6 +153,10 @@ public class DeviceManager {
         return deviceStatus;
     }
 
+    public Map<String, String> getUserStatuses() {
+        return userStatuses;
+    }
+
     public String getUserUUID() {
         return userUUID;
     }
@@ -138,5 +167,26 @@ public class DeviceManager {
 
     public void updateUserName(String newName) {
         userName = newName;
+    }
+
+    public void setUserStatus(String status) {
+        userStatus = status;
+        broadcastStatus();
+    }
+
+    private void broadcastStatus() {
+        discoveredDevices.forEach((name, address) -> {
+            try (var socket = securityManager.createSSLSocket(address, PORT)) {
+                socket.startHandshake();
+                try (var dos = new DataOutputStream(socket.getOutputStream())) {
+                    dos.writeUTF(userUUID);
+                    dos.writeUTF("STATUS");
+                    dos.writeUTF(userName + "_" + userUUID);
+                    dos.writeUTF(userStatus);
+                }
+            } catch (IOException e) {
+                // Silent
+            }
+        });
     }
 }

@@ -10,6 +10,8 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.zip.*;
+import oshi.SystemInfo;
+import oshi.hardware.NetworkIF;
 
 public class FileTransferManager {
     private static final int CHUNK_SIZE = 8192;
@@ -17,17 +19,22 @@ public class FileTransferManager {
     private static String savePath = System.getProperty("user.home") + "/Downloads";
     private static long transferSpeedLimit = 0;
     private static boolean autoAcceptFiles = false;
+    private static boolean autoBandwidthLimit = false;
     private final DeviceManager deviceManager;
     private final DatabaseManager databaseManager;
     private final SecurityManager securityManager;
     private final ExecutorService transferExecutor = Executors.newFixedThreadPool(4);
     private final Map<String, Double> transferProgress = new ConcurrentHashMap<>();
     private final Map<String, Future<?>> transferTasks = new ConcurrentHashMap<>();
+    private final SystemInfo systemInfo = new SystemInfo();
 
     public FileTransferManager(DeviceManager deviceManager, DatabaseManager databaseManager, SecurityManager securityManager) {
         this.deviceManager = deviceManager;
         this.databaseManager = databaseManager;
         this.securityManager = securityManager;
+        if (autoBandwidthLimit) {
+            startBandwidthMonitor();
+        }
     }
 
     public void sendFileOrFolder(String target, TextInputDialog tagDialog, ProgressBar progressBar) {
@@ -107,9 +114,7 @@ public class FileTransferManager {
                         double progress = (double) bytesRead / sendFile.length();
                         transferProgress.put(fileName, progress);
                         Platform.runLater(() -> progressBar.setProgress(progress));
-                        if (transferSpeedLimit > 0) {
-                            throttleTransfer(bytesRead, startTime);
-                        }
+                        throttleTransfer(bytesRead, startTime);
                     }
                     databaseManager.logTransfer(fileName, "전송", sendFile.length(), metadata);
                     databaseManager.logTags(fileName, tags);
@@ -183,9 +188,7 @@ public class FileTransferManager {
                 double progress = (double) bytesRead / fileSize;
                 transferProgress.put(fileName, progress);
                 Platform.runLater(() -> progressBar.setProgress(progress));
-                if (transferSpeedLimit > 0) {
-                    throttleTransfer(bytesRead, startTime);
-                }
+                throttleTransfer(bytesRead, startTime);
             }
             String receivedHash = securityManager.bytesToHex(digest.digest());
             if (!receivedHash.equals(expectedHash)) {
@@ -234,16 +237,62 @@ public class FileTransferManager {
     }
 
     private void throttleTransfer(long bytesRead, long startTime) {
-        if (transferSpeedLimit <= 0) return;
-        long elapsed = System.currentTimeMillis() - startTime;
-        long expectedTime = (bytesRead * 1000) / transferSpeedLimit;
-        if (elapsed < expectedTime) {
+        long effectiveSpeed = transfer if (autoBandwidthLimit) {
+            long effectiveSpeedLimit = calculateDynamicBandwidthLimit();
+        } else if (transferSpeedLimit > 0) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            long expectedTime = (bytesRead * 1000L) / effectiveSpeedLimit;
+            if (elapsed < expectedTime) {
+                try {
+                    Thread.sleep(expectedTime - elapsed);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private long calculateDynamicBandwidthLimit() {
+        NetworkIF[] interfaces = systemInfo.getHardware().getNetworkIFs();
+        long totalBytesPerSec = 0;
+        for (NetworkIF nif : interfaces) {
+            long bytesSent = nif.getBytesSent();
+            long bytesRecv = nif.getBytesRecv();
             try {
-                Thread.sleep(expectedTime - elapsed);
+                Thread.sleep(1000); // 1초 대기
+                nif.updateAttributes();
+                long newBytesSent = nif.getBytesSent();
+                long newBytesRecv = nif.getBytesRecv();
+                totalBytesPerSec += (newBytesSent - bytesSent) + (newBytesRecv - bytesRecv);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
+        // 최대 대역폭의 50% 사용
+        return Math.max(1024, totalBytesPerSec / 2);
+    }
+
+    private void startBandwidthMonitor() {
+        new Thread(() -> {
+            while (autoBandwidthLimit) {
+                transferSpeedLimit = calculateDynamicBandwidthLimit();
+                try {
+                    Thread.sleep(5000); // 5초마다 갱신
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    public void enableAutoBandwidthLimit() {
+        autoBandwidthLimit = true;
+        startBandwidthMonitor();
+    }
+
+    public void disableAutoBandwidthLimit() {
+        autoBandwidthLimit = false;
+        transferSpeedLimit = 0;
     }
 
     public Map<String, Double> getTransferProgress() {
@@ -260,6 +309,10 @@ public class FileTransferManager {
 
     public void setTransferSpeedLimit(long limit) {
         transferSpeedLimit = limit;
+    }
+
+    public String getSavePath() {
+        return savePath;
     }
 
     public void setSavePath(String path) {
@@ -282,7 +335,7 @@ public class FileTransferManager {
     }
 
     private String getResourceString(String key) {
-        return java.util.ResourceBundle.getBundle("messages", java.util.Locale.getDefault()).getString(key);
+        return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void notify(String message) {

@@ -12,7 +12,6 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import java.io.File;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Optional;
 
 public class UIManager {
@@ -40,7 +39,7 @@ public class UIManager {
         tab.setClosable(false);
 
         deviceListView = new ListView<>();
-        deviceListView.getItems().addAll(deviceManager.getDiscoveredDevices().keySet());
+        updateDeviceList();
         chatArea = new TextArea();
         chatArea.setEditable(false);
         chatInput = new TextField();
@@ -96,6 +95,14 @@ public class UIManager {
         addManualIpButton.setOnAction(e -> deviceManager.addManualDevice(manualIpInput.getText(), () -> notify(getResourceString("manual_device_added") + manualIpInput.getText())));
 
         return tab;
+    }
+
+    private void updateDeviceList() {
+        deviceListView.getItems().clear();
+        deviceManager.getDiscoveredDevices().forEach((name, address) -> {
+            String status = deviceManager.getUserStatuses().getOrDefault(name, "Online");
+            deviceListView.getItems().add(name + " (" + status + ")");
+        });
     }
 
     private void showTransferLog() {
@@ -170,7 +177,7 @@ public class UIManager {
             notify(getResourceString("select_device"));
             return;
         }
-        String uuid = target.split("_")[1];
+        String uuid = target.split("_")[1].split(" \\(")[0];
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle(getResourceString("block_user"));
         dialog.setHeaderText(getResourceString("configure_block") + target);
@@ -261,7 +268,7 @@ public class UIManager {
             notify(getResourceString("select_device"));
             return;
         }
-        String uuid = target.split("_")[1];
+        String uuid = target.split("_")[1].split(" \\(")[0];
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle(getResourceString("manage_contacts"));
         dialog.setHeaderText(getResourceString("set_contact_grade") + target);
@@ -280,11 +287,13 @@ public class UIManager {
     }
 
     public void notify(String message) {
-        Platform.runLater(() -> chatArea.appendText(getResourceString("notification") + message + "\n"));
+        if (SettingsTab.isNotificationsEnabled()) {
+            Platform.runLater(() -> chatArea.appendText(getResourceString("notification") + message + "\n"));
+        }
     }
 
     private String getResourceString(String key) {
-        return java.util.ResourceBundle.getBundle("messages", java.util.Locale.getDefault()).getString(key);
+        return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void updateAvatar() {
