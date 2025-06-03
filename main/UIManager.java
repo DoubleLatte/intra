@@ -1,5 +1,7 @@
 package filesharing.main;
 
+import javafx.animation.FadeTransition;
+import javafx.animation.ScaleTransition;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -55,12 +57,13 @@ public class UIManager {
         Button settingsButton = new Button();
         settingsButton.getStyleClass().add("icon-button");
         settingsButton.setTooltip(new Tooltip(getResourceString("settings_tab")));
+        addButtonAnimation(settingsButton);
         settingsButton.setOnAction(e -> openSettings());
-        VBox sidebar = new VBox(10, new Label(getResourceString("device_list")), deviceListView, 
+        VBox sidebar = new VBox(15, new Label(getResourceString("device_list")), deviceListView, 
                                new HBox(10, avatarView, statusLabel), settingsButton);
         sidebar.getStyleClass().add("sidebar");
         sidebar.setAlignment(Pos.TOP_CENTER);
-        sidebar.setPadding(new Insets(10));
+        sidebar.setPadding(new Insets(20, 10, 10, 10));
 
         // Center Panel: Chat and Controls
         chatArea = new TextArea();
@@ -68,34 +71,43 @@ public class UIManager {
         chatArea.getStyleClass().add("chat-area");
         chatInput = new TextField();
         chatInput.setPromptText(getResourceString("type_message"));
+        chatInput.getStyleClass().add("ios-text-field");
         Button sendChatButton = new Button(getResourceString("send"));
         sendChatButton.getStyleClass().add("action-button");
+        addButtonAnimation(sendChatButton);
         progressBar = new ProgressBar(0);
         progressBar.setVisible(false);
-        HBox chatControls = new HBox(5, chatInput, sendChatButton);
+        progressBar.getStyleClass().add("ios-progress-bar");
+        HBox chatControls = new HBox(8, chatInput, sendChatButton);
         chatControls.setAlignment(Pos.CENTER);
         searchBar = new TextField();
         searchBar.setPromptText(getResourceString("search_chat_prompt"));
+        searchBar.getStyleClass().add("ios-text-field");
         Button searchButton = new Button(getResourceString("search"));
         searchButton.getStyleClass().add("action-button");
-        HBox searchBox = new HBox(5, searchBar, searchButton);
-        VBox centerPanel = new VBox(10, searchBox, chatArea, chatControls, progressBar);
+        addButtonAnimation(searchButton);
+        HBox searchBox = new HBox(8, searchBar, searchButton);
+        searchBox.setPadding(new Insets(0, 0, 10, 0));
+        VBox centerPanel = new VBox(15, searchBox, chatArea, chatControls, progressBar);
         centerPanel.getStyleClass().add("center-panel");
-        centerPanel.setPadding(new Insets(10));
+        centerPanel.setPadding(new Insets(20));
 
         // Right Panel: User List and Quick Actions
         userListView = new ListView<>();
         updateUserList();
         Button sendFileButton = new Button(getResourceString("send_file"));
         sendFileButton.getStyleClass().add("action-button");
+        addButtonAnimation(sendFileButton);
         Button viewStatsButton = new Button(getResourceString("view_stats"));
         viewStatsButton.getStyleClass().add("action-button");
+        addButtonAnimation(viewStatsButton);
         Button cancelTransferButton = new Button(getResourceString("cancel_transfer"));
         cancelTransferButton.getStyleClass().add("action-button");
-        VBox rightPanel = new VBox(10, new Label(getResourceString("users")), userListView, 
+        addButtonAnimation(cancelTransferButton);
+        VBox rightPanel = new VBox(15, new Label(getResourceString("users")), userListView, 
                                   sendFileButton, viewStatsButton, cancelTransferButton);
         rightPanel.getStyleClass().add("right-panel");
-        rightPanel.setPadding(new Insets(10));
+        rightPanel.setPadding(new Insets(20, 10, 10, 10));
 
         // Main Layout
         BorderPane layout = new BorderPane();
@@ -140,6 +152,25 @@ public class UIManager {
         return tab;
     }
 
+    private void addButtonAnimation(Button button) {
+        ScaleTransition scale = new ScaleTransition(javafx.util.Duration.millis(100), button);
+        scale.setToX(1.1);
+        scale.setToY(1.1);
+        FadeTransition fade = new FadeTransition(javafx.util.Duration.millis(100), button);
+        fade.setToValue(0.8);
+        button.setOnMouseEntered(e -> {
+            scale.playFromStart();
+            fade.playFromStart();
+        });
+        button.setOnMouseExited(e -> {
+            scale.setToX(1.0);
+            scale.setToY(1.0);
+            fade.setToValue(1.0);
+            scale.playFromStart();
+            fade.playFromStart();
+        });
+    }
+
     private void updateDeviceList() {
         Platform.runLater(() -> {
             deviceListView.getItems().clear();
@@ -167,7 +198,7 @@ public class UIManager {
                 updateUserList();
                 statusLabel.setText(deviceManager.getUserStatus());
                 try {
-                    Thread.sleep(5000); // 5초마다 업데이트
+                    Thread.sleep(5000);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
