@@ -1,5 +1,5 @@
 /* iOS-inspired Dark Theme */
-.root {
+:root {
     -fx-background-color: #1c2526;
     -fx-font-family: "System", -apple-system, BlinkMacSystemFont, sans-serif;
     -fx-font-size: 14px;
@@ -9,74 +9,79 @@
     -fx-background-color: #2a2f30;
     -fx-border-color: #1c2526;
     -fx-border-width: 0 1 0 0;
-    -fx-background-radius: 10 0 0 10;
+    -fx-background-radius: 10px 0 0 10px;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 10, 0, 2, 2);
+    -fx-padding: 10px;
 }
 
 .center-panel {
-    -fx-background-color: #1c2526;
-    -fx-background-radius: 10;
+    -fx-background-color: #333;
+    -fx-background-radius: 20px;
+    -fx-background-color: #ffffff;
+    -fx-padding: 20px;
 }
 
 .right-panel {
-    -fx-background-color: #2a2f30;
-    -fx-border-color: #1c2526;
-    -fx-border-width: 0 0 0 1;
-    -fx-background-radius: 0 10 10 0;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 10, 0, -2, 2);
+    -fx-background-color: #2f2f30;
+    -fx-border-color: #333;
+    -fx-background-color: #ffffff33;
+    -fx-border-width: 0 0 0 1px;
+    -fx-background-radius: 0 10px 10px 0;
+    -fx-effect: none;
+    -fx-padding: 10px;
 }
 
-.sidebar-list {
+.list-view.sidebar-list {
     -fx-background-color: transparent;
     -fx-text-fill: #ffffff;
-    -fx-selection-bar: #3a3f40;
-    -fx-background-radius: 8;
+    -fx-selection-bar-color: #3a3f40;
+    -fx-background-radius: 8px;
 }
 
-.chat-area {
+.text-area.chat-area {
     -fx-background-color: #2a2f30;
     -fx-text-fill: #ffffff;
-    -fx-control-inner-background: #2a2f30;
+    -fx-control-inner-background: #2f2f30;
     -fx-border-color: #3a3f40;
-    -fx-border-radius: 10;
-    -fx-padding: 10;
+    -fx-border-radius: 10px;
+    -fx-padding: 10px;
 }
 
-.ios-text-field {
+.text-field.ios-text-field {
     -fx-background-color: #3a3f40;
     -fx-text-fill: #ffffff;
-    -fx-prompt-text-fill: #a0a0a0;
-    -fx-background-radius: 15;
-    -fx-padding: 10 15 10 15;
+    -fx-prompt-text-fill: #333;
+    -fx-background-radius: 15px;
+    -fx-padding: 10px 15px;
 }
 
-.action-button {
-    -fx-background-color: #007aff;
+.button.action-button {
+    -fx-background-color: #333333;
     -fx-text-fill: #ffffff;
-    -fx-background-radius: 15;
-    -fx-padding: 10 20 10 20;
+    -fx-background-radius: 11px;
+    -fx-padding: 10px 20px;
     -fx-font-weight: bold;
 }
 
 .action-button:hover {
-    -fx-background-color: #005bb5;
+    -fx-background-color: #555555;
 }
 
-.icon-button {
+.button.icon-button {
     -fx-background-color: transparent;
     -fx-background-image: url("settings-icon.png");
-    -fx-background-size: 28 28;
+    -fx-background-size: 28px 28px;
     -fx-background-repeat: no-repeat;
     -fx-background-position: center;
     -fx-background-radius: 50%;
-    -fx-padding: 10;
+    -fx-padding: 10px;
 }
 
 .icon-button:hover {
     -fx-background-color: #3a3f40;
 }
 
-.status-label {
+.label.status-label {
     -fx-text-fill: #34c759;
     -fx-font-size: 12px;
     -fx-font-weight: bold;
@@ -87,21 +92,31 @@
     -fx-font-weight: bold;
 }
 
-.ios-progress-bar .bar {
+.progress-bar.ios-progress-bar .bar {
     -fx-background-color: #007aff;
-    -fx-background-radius: 10;
+    -fx-background-radius: 10px;
 }
 
-.ios-progress-bar .track {
+.progress-bar.ios-progress-bar .track {
     -fx-background-color: #3a3f40;
-    -fx-background-radius: 10;
+    -fx-background-radius: 10px;
 }
 
-.notification-badge {
+.label.notification-badge {
     -fx-background-color: #ff3b30;
     -fx-text-fill: #ffffff;
     -fx-background-radius: 50%;
-    -fx-padding: 5 10 5 10;
+    -fx-padding: 5px 10px;
     -fx-font-size: 12px;
     -fx-font-weight: bold;
+}
+
+.label.update-notification {
+    -fx-background-color: #007aff;
+    -fx-text-fill: #ffffff;
+    -fx-background-radius: 10px;
+    -fx-padding: 10px 20px;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 5, 0, 0, 2);
 }
