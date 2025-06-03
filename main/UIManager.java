@@ -36,6 +36,7 @@ public class UIManager {
     private static String avatarPath = "";
     private Label statusLabel;
     private Label notificationBadge;
+    private BorderPane layout;
 
     public UIManager(DeviceManager deviceManager, ChatManager chatManager, FileTransferManager fileTransferManager, StatsManager statsManager) {
         this.deviceManager = deviceManager;
@@ -127,7 +128,7 @@ public class UIManager {
         rightPanel.setPadding(new Insets(20, 10, 10, 10));
 
         // Main Layout
-        BorderPane layout = new BorderPane();
+        layout = new BorderPane();
         layout.setLeft(sidebar);
         layout.setCenter(centerPanel);
         layout.setRight(rightPanel);
@@ -178,15 +179,16 @@ public class UIManager {
 
         // Real-time Updates
         startDeviceStatusUpdater();
+        startUpdateListener(); // Start listening for update notifications
 
         return tab;
     }
 
     private void addButtonAnimation(Button button) {
-        ScaleTransition scale = new ScaleTransition(javafx.util.Duration.millis(100), button);
+        ScaleTransition scale = new ScaleTransition(Duration.millis(100), button);
         scale.setToX(1.1);
         scale.setToY(1.1);
-        FadeTransition fade = new FadeTransition(javafx.util.Duration.millis(100), button);
+        FadeTransition fade = new FadeTransition(Duration.millis(100), button);
         fade.setToValue(0.8);
         button.setOnMouseEntered(e -> {
             scale.playFromStart();
@@ -247,6 +249,40 @@ public class UIManager {
                 }
             }
         }).start();
+    }
+
+    private void startUpdateListener() {
+        // Simulated update listener for P2P notifications
+        new Thread(() -> {
+            while (true) {
+                // Simulate receiving update notification
+                String version = "1.2.3";
+                boolean isMainDeveloper = false; // Simulated third-party update
+                showLatestUpdateVersion(version, isMainDeveloper);
+                try {
+                    Thread.sleep(3600000); // Check hourly
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    private void showLatestUpdateVersion(String version, boolean isMainDeveloper) {
+        Platform.runLater(() -> {
+            Label notification = new Label("New update available: v" + version);
+            notification.getStyleClass().add("update-notification");
+            if (!isMainDeveloper) {
+                notification.setText(notification.getText() + " (Third-party)");
+            }
+            StackPane.setAlignment(notification, Pos.TOP_CENTER);
+            layout.getChildren().add(notification);
+            FadeTransition fade = new FadeTransition(Duration.seconds(5), notification);
+            fade.setFromValue(1.0);
+            fade.setToValue(0.0);
+            fade.setOnFinished(e -> layout.getChildren().remove(notification));
+            fade.play();
+        });
     }
 
     private void searchChatLog() {
@@ -311,14 +347,14 @@ public class UIManager {
             String originalName = versionName.split("\\.v")[0];
             File originalFile = new File(fileTransferManager.getSavePath(), originalName);
             try {
-                Files.copy(versionFile.toPath(), originalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                databaseManager.logActivity(deviceManager.getUserUUID(), "Restored file version: " + versionName + " to " + originalName);
-                notify(getResourceString("file_version_restored") + originalName);
+                Files.copy(versionFile.toPath(), originalFile.getAbsolutePath(), StandardCopyOption.REPLACE_EXISTING);
+                databaseManager.logUpdateActivity("Restored file version: " + versionName + " to " + originalFile);
+                notify("File version restored: " + originalFile);
             } catch (IOException e) {
-                notify("Error restoring file version: " + e.getMessage());
+                notify("Error downloading file version: " + e.getMessage());
             }
         } else {
-            notify(getResourceString("file_version_not_found"));
+            notify("File version not found");
         }
     }
 

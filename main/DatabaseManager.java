@@ -140,6 +140,10 @@ public class DatabaseManager {
         }
     }
 
+    public void logUpdateActivity(String action) {
+        logActivity(UUID.randomUUID().toString(), "Update: " + action);
+    }
+
     public void logFileVersion(String fileName, String versionName, long size, String hash) {
         try (Connection conn = getVersionConnection();
              PreparedStatement pstmt = conn.prepareStatement("INSERT INTO versions (file_name, version_name, size, hash, timestamp) VALUES (?, ?, ?, ?, ?)")) {
