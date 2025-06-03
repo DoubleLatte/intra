@@ -140,8 +140,10 @@ public class DatabaseManager {
         }
     }
 
-    public void logUpdateActivity(String action) {
-        logActivity(UUID.randomUUID().toString(), "Update: " + action);
+    public void logUpdateActivity(String action, String version, String developer, boolean success) {
+        String detailedAction = String.format("Update: %s (Version: %s, Developer: %s, Status: %s)", 
+                                             action, version, developer, success ? "Success" : "Failed");
+        logActivity(UUID.randomUUID().toString(), detailedAction);
     }
 
     public void logFileVersion(String fileName, String versionName, long size, String hash) {
