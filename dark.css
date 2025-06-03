@@ -1,82 +1,107 @@
-/* Discord-inspired Dark Theme */
+/* iOS-inspired Dark Theme */
 .root {
-    -fx-background-color: #2f3136;
-    -fx-font-family: "Segoe UI", Arial, sans-serif;
+    -fx-background-color: #1c2526;
+    -fx-font-family: "System", -apple-system, BlinkMacSystemFont, sans-serif;
+    -fx-font-size: 14px;
 }
 
 .sidebar {
-    -fx-background-color: #202225;
-    -fx-border-color: #1c1e21;
+    -fx-background-color: #2a2f30;
+    -fx-border-color: #1c2526;
     -fx-border-width: 0 1 0 0;
+    -fx-background-radius: 10 0 0 10;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 10, 0, 2, 2);
 }
 
 .center-panel {
-    -fx-background-color: #36393f;
+    -fx-background-color: #1c2526;
+    -fx-background-radius: 10;
 }
 
 .right-panel {
-    -fx-background-color: #2f3136;
-    -fx-border-color: #1c1e21;
+    -fx-background-color: #2a2f30;
+    -fx-border-color: #1c2526;
     -fx-border-width: 0 0 0 1;
+    -fx-background-radius: 0 10 10 0;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 10, 0, -2, 2);
 }
 
 .sidebar-list {
     -fx-background-color: transparent;
-    -fx-text-fill: #dcddde;
-    -fx-selection-bar: #40444b;
+    -fx-text-fill: #ffffff;
+    -fx-selection-bar: #3a3f40;
+    -fx-background-radius: 8;
 }
 
 .chat-area {
-    -fx-background-color: #36393f;
-    -fx-text-fill: #dcddde;
-    -fx-control-inner-background: #36393f;
-    -fx-border-color: #202225;
-    -fx-border-radius: 5;
+    -fx-background-color: #2a2f30;
+    -fx-text-fill: #ffffff;
+    -fx-control-inner-background: #2a2f30;
+    -fx-border-color: #3a3f40;
+    -fx-border-radius: 10;
+    -fx-padding: 10;
 }
 
-.text-field {
-    -fx-background-color: #40444b;
-    -fx-text-fill: #dcddde;
-    -fx-prompt-text-fill: #72767d;
-    -fx-border-radius: 5;
+.ios-text-field {
+    -fx-background-color: #3a3f40;
+    -fx-text-fill: #ffffff;
+    -fx-prompt-text-fill: #a0a0a0;
+    -fx-background-radius: 15;
+    -fx-padding: 10 15 10 15;
 }
 
 .action-button {
-    -fx-background-color: #5865f2;
+    -fx-background-color: #007aff;
     -fx-text-fill: #ffffff;
-    -fx-background-radius: 5;
-    -fx-padding: 8 16 8 16;
+    -fx-background-radius: 15;
+    -fx-padding: 10 20 10 20;
+    -fx-font-weight: bold;
 }
 
 .action-button:hover {
-    -fx-background-color: #4752c4;
+    -fx-background-color: #005bb5;
 }
 
 .icon-button {
     -fx-background-color: transparent;
     -fx-background-image: url("settings-icon.png");
-    -fx-background-size: 24 24;
+    -fx-background-size: 28 28;
     -fx-background-repeat: no-repeat;
     -fx-background-position: center;
+    -fx-background-radius: 50%;
+    -fx-padding: 10;
 }
 
 .icon-button:hover {
-    -fx-background-color: #40444b;
+    -fx-background-color: #3a3f40;
 }
 
 .status-label {
-    -fx-text-fill: #43b581;
+    -fx-text-fill: #34c759;
     -fx-font-size: 12px;
+    -fx-font-weight: bold;
 }
 
 .label {
-    -fx-text-fill: #b9bbbe;
+    -fx-text-fill: #d0d0d0;
+    -fx-font-weight: bold;
 }
 
-.progress-bar .bar {
-    -fx-background-color: #5865f2;
+.ios-progress-bar .bar {
+    -fx-background-color: #007aff;
+    -fx-background-radius: 10;
 }
 
-.progress-bar .track {
-    -fx-background-color: #40444b;
+.ios-progress-bar .track {
+    -fx-background-color: #3a3f40;
+    -fx-background-radius: 10;
+}
+
+.notification-badge {
+    -fx-background-color: #ff3b30;
+    -fx-text-fill: #ffffff;
+    -fx-background-radius: 50%;
+    -fx-padding: 5 10 5 10;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
 }
