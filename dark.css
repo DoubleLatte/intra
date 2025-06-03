@@ -1,13 +1,82 @@
+/* Discord-inspired Dark Theme */
 .root {
-    -fx-background-color: #333333;
-    -fx-font-family: "Arial";
-    -fx-text-fill: white;
+    -fx-background-color: #2f3136;
+    -fx-font-family: "Segoe UI", Arial, sans-serif;
 }
-.button {
-    -fx-background-color: #555555;
-    -fx-text-fill: white;
+
+.sidebar {
+    -fx-background-color: #202225;
+    -fx-border-color: #1c1e21;
+    -fx-border-width: 0 1 0 0;
 }
-.text-area {
-    -fx-background-color: #444444;
-    -fx-text-fill: white;
+
+.center-panel {
+    -fx-background-color: #36393f;
+}
+
+.right-panel {
+    -fx-background-color: #2f3136;
+    -fx-border-color: #1c1e21;
+    -fx-border-width: 0 0 0 1;
+}
+
+.sidebar-list {
+    -fx-background-color: transparent;
+    -fx-text-fill: #dcddde;
+    -fx-selection-bar: #40444b;
+}
+
+.chat-area {
+    -fx-background-color: #36393f;
+    -fx-text-fill: #dcddde;
+    -fx-control-inner-background: #36393f;
+    -fx-border-color: #202225;
+    -fx-border-radius: 5;
+}
+
+.text-field {
+    -fx-background-color: #40444b;
+    -fx-text-fill: #dcddde;
+    -fx-prompt-text-fill: #72767d;
+    -fx-border-radius: 5;
+}
+
+.action-button {
+    -fx-background-color: #5865f2;
+    -fx-text-fill: #ffffff;
+    -fx-background-radius: 5;
+    -fx-padding: 8 16 8 16;
+}
+
+.action-button:hover {
+    -fx-background-color: #4752c4;
+}
+
+.icon-button {
+    -fx-background-color: transparent;
+    -fx-background-image: url("settings-icon.png");
+    -fx-background-size: 24 24;
+    -fx-background-repeat: no-repeat;
+    -fx-background-position: center;
+}
+
+.icon-button:hover {
+    -fx-background-color: #40444b;
+}
+
+.status-label {
+    -fx-text-fill: #43b581;
+    -fx-font-size: 12px;
+}
+
+.label {
+    -fx-text-fill: #b9bbbe;
+}
+
+.progress-bar .bar {
+    -fx-background-color: #5865f2;
+}
+
+.progress-bar .track {
+    -fx-background-color: #40444b;
 }

@@ -1,11 +1,82 @@
+/* Light Theme */
 .root {
-    -fx-background-color: #f4f4f4;
-    -fx-font-family: "Arial";
+    -fx-background-color: #ffffff;
+    -fx-font-family: "Segoe UI", Arial, sans-serif;
 }
-.button {
-    -fx-background-color: #4CAF50;
-    -fx-text-fill: white;
+
+.sidebar {
+    -fx-background-color: #f2f3f5;
+    -fx-border-color: #e3e5e8;
+    -fx-border-width: 0 1 0 0;
 }
-.text-area {
-    -fx-background-color: white;
+
+.center-panel {
+    -fx-background-color: #ffffff;
+}
+
+.right-panel {
+    -fx-background-color: #f2f3f5;
+    -fx-border-color: #e3e5e8;
+    -fx-border-width: 0 0 0 1;
+}
+
+.sidebar-list {
+    -fx-background-color: transparent;
+    -fx-text-fill: #2e3338;
+    -fx-selection-bar: #e3e5e8;
+}
+
+.chat-area {
+    -fx-background-color: #ffffff;
+    -fx-text-fill: #2e3338;
+    -fx-control-inner-background: #ffffff;
+    -fx-border-color: #e3e5e8;
+    -fx-border-radius: 5;
+}
+
+.text-field {
+    -fx-background-color: #f2f3f5;
+    -fx-text-fill: #2e3338;
+    -fx-prompt-text-fill: #72767d;
+    -fx-border-radius: 5;
+}
+
+.action-button {
+    -fx-background-color: #5865f2;
+    -fx-text-fill: #ffffff;
+    -fx-background-radius: 5;
+    -fx-padding: 8 16 8 16;
+}
+
+.action-button:hover {
+    -fx-background-color: #4752c4;
+}
+
+.icon-button {
+    -fx-background-color: transparent;
+    -fx-background-image: url("settings-icon.png");
+    -fx-background-size: 24 24;
+    -fx-background-repeat: no-repeat;
+    -fx-background-position: center;
+}
+
+.icon-button:hover {
+    -fx-background-color: #e3e5e8;
+}
+
+.status-label {
+    -fx-text-fill: #43b581;
+    -fx-font-size: 12px;
+}
+
+.label {
+    -fx-text-fill: #2e3338;
+}
+
+.progress-bar .bar {
+    -fx-background-color: #5865f2;
+}
+
+.progress-bar .track {
+    -fx-background-color: #e3e5e8;
 }
