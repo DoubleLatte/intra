@@ -1,10 +1,13 @@
 package filesharing.main;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.type.TypeFactory;
 import filesharing.settings.SupportedLanguage;
 import filesharing.settings.SupportedTheme;
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.*;
+import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.util.*;
 import java.util.concurrent.*;
@@ -42,12 +45,12 @@ public class SettingsTab {
 
         // Profile Settings
         Label profileLabel = new Label(getResourceString("user_name"));
-        TextField profileField = new TextField(deviceManager.getUserName());
+        TextField profileField = new TextField(deviceManager.getDisplayName());
         Button updateProfileButton = new Button(getResourceString("update_profile"));
         updateProfileButton.getStyleClass().add("action-button");
         updateProfileButton.setOnAction(e -> {
-            deviceManager.updateUserName(profileField.getText());
-            notify(getResourceString("profile_updated") + profileField.getText());
+            deviceManager.updateDisplayName(profileField.getText());
+            notify(getResourceString("profile_updated") + " " + profileField.getText());
         });
 
         // Avatar Settings
@@ -58,21 +61,21 @@ public class SettingsTab {
             fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg"));
             File file = fileChooser.showOpenDialog(null);
             if (file != null) {
-                new UIManager(deviceManager, new ChatManager(deviceManager, databaseManager, securityManager), fileTransferManager, new StatsManager()).setAvatarPath(file.getAbsolutePath());
+                new UIManager().setAvatarPath(file.getAbsolutePath());
                 notify(getResourceString("avatar_updated"));
             }
         });
 
         // Speed Limit Settings
         Label speedLimitLabel = new Label(getResourceString("speed_limit"));
-        TextField speedLimitField = new TextField(String.valueOf(fileTransferManager.getTransferSpeedLimit()));
+        TextField speedLimitField = new TextField(String.valueOf(fileTransferManager.getSpeedLimit()));
         Button applySpeedLimitButton = new Button(getResourceString("apply_speed_limit"));
         applySpeedLimitButton.getStyleClass().add("action-button");
         applySpeedLimitButton.setOnAction(e -> {
             try {
                 long limit = Long.parseLong(speedLimitField.getText());
-                fileTransferManager.setTransferSpeedLimit(limit);
-                notify(getResourceString("speed_limit_applied") + limit);
+                fileTransferManager.setSpeedLimit(limit);
+                notify(getResourceString("speed_limit_applied") + " " + limit);
             } catch (NumberFormatException ex) {
                 notify(getResourceString("invalid_speed_limit"));
             }
@@ -80,13 +83,13 @@ public class SettingsTab {
 
         // Auto Bandwidth Limit
         CheckBox autoBandwidthCheckBox = new CheckBox(getResourceString("auto_bandwidth_limit"));
-        autoBandwidthCheckBox.setSelected(fileTransferManager.isAutoAcceptFiles());
+        autoBandwidthCheckBox.setSelected(fileTransferManager.isAutoEnabled());
         autoBandwidthCheckBox.setOnAction(e -> {
             if (autoBandwidthCheckBox.isSelected()) {
-                fileTransferManager.enableAutoBandwidthLimit();
+                fileTransferManager.enableAutoBandwidth();
                 notify(getResourceString("auto_bandwidth_enabled"));
             } else {
-                fileTransferManager.disableAutoBandwidthLimit();
+                fileTransferManager.disableAutoBandwidth();
                 notify(getResourceString("auto_bandwidth_disabled"));
             }
         });
@@ -95,13 +98,13 @@ public class SettingsTab {
         Label languageLabel = new Label(getResourceString("language"));
         ComboBox<String> languageCombo = new ComboBox<>();
         for (SupportedLanguage lang : SupportedLanguage.values()) {
-            languageCombo.getItems().add(lang.getDisplayValue());
+            languageCombo.getItems().add(lang.getDisplayName());
         }
         languageCombo.setValue(SupportedLanguage.ENGLISH.getDisplayValue());
         Button applyLanguageButton = new Button(getResourceString("apply_language"));
         applyLanguageButton.getStyleClass().add("action-button");
         applyLanguageButton.setOnAction(e -> {
-            notify(getResourceString("language_updated") + languageCombo.getValue());
+            notify(getResourceString("language_updated") + " " + languageCombo.getValue());
         });
 
         // Theme Settings
@@ -116,9 +119,9 @@ public class SettingsTab {
         applyThemeButton.setOnAction(e -> {
             String selectedTheme = themeCombo.getValue();
             String cssFile = selectedTheme.equals(SupportedTheme.DARK.getDisplayName()) ? "/dark.css" : "/style.css";
-            settingsTab.getContent().getScene().getStylesheets().clear();
-            settingsTab.getContent().getScene().getStylesheets().add(getClass().getResource(cssFile).toExternalForm());
-            notify(getResourceString("theme_updated") + selectedTheme);
+            settingsTab.getScene().getStylesheets().clear();
+            settingsTab.getScene().getStylesheets().add(getClass().getResource(cssFile).toExternalForm());
+            notify(getResourceString("theme_updated") + " " + selectedTheme);
         });
 
         // Log Backup
@@ -130,27 +133,27 @@ public class SettingsTab {
             File file = fileChooser.showSaveDialog(null);
             if (file != null) {
                 try {
-                    fileTransferManager.startAutoBackup();
-                    databaseManager.exportBackup(file.getAbsolutePath());
-                    notify(getResourceString("log_exported"));
+                    fileTransferManager.start();
+                    databaseManager.export(file.getAbsolutePath());
+                    notify(getResourceString("file_completed"));
                 } catch (Exception ex) {
-                    notify("Log export error: " + ex.getMessage());
+                    notify("Export error: " + ex.getMessage());
                 }
             }
         });
 
         // Save Path Settings
         Label savePathLabel = new Label(getResourceString("save_path"));
-        TextField savePathField = new TextField(fileTransferManager.getSavePath());
+        TextField savePathField = new TextField(fileTransferManager.getPath());
         Button chooseSavePathButton = new Button(getResourceString("choose_save_path"));
         chooseSavePathButton.getStyleClass().add("action-button");
         chooseSavePathButton.setOnAction(e -> {
             DirectoryChooser directoryChooser = new DirectoryChooser();
             File dir = directoryChooser.showDialog(null);
             if (dir != null) {
-                fileTransferManager.setSavePath(dir.getAbsolutePath());
-                savePathField.setText(dir.getAbsolutePath());
-                notify(getResourceString("save_path_updated"));
+                fileTransferManager.setPath(dir.getAbsolutePath());
+                savePathField.setText(dir.getText());
+                notify(getResourceString("path_updated"));
             }
         });
 
@@ -158,16 +161,16 @@ public class SettingsTab {
         CheckBox notificationCheckBox = new CheckBox(getResourceString("enable_notifications"));
         notificationCheckBox.setSelected(notificationsEnabled);
         notificationCheckBox.setOnAction(e -> {
-            notificationsEnabled = notificationCheckBox.isSelected();
-            notify(notificationsEnabled ? getResourceString("notifications_enabled") : getResourceString("notifications_disabled"));
+            NotificationsEnabled = notificationCheckBox.isSelected();
+            notify(getResourceString(notificationsEnabled ? "notifications_enabled" : "notifications_disabled"));
         });
 
         Button notificationSoundButton = new Button(getResourceString("choose_notification_sound"));
         notificationSoundButton.getStyleClass().add("action-button");
         notificationSoundButton.setOnAction(e -> {
             FileChooser fileChooser = new FileChooser();
-            fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Audio Files", "*.wav", "*.mp3"));
-            File file = fileChooser.showOpenDialog(null);
+            fileChooser.getExtensionFilters().add(new FileChooser().ExtensionFilter("Files", "*.wav", "*.mp3"));
+            File file filth = fileChooser.showOpenDialog(null);
             if (file != null) {
                 notificationSoundPath = file.getAbsolutePath();
                 notify(getResourceString("notification_sound_updated"));
@@ -176,18 +179,18 @@ public class SettingsTab {
 
         // User Status Settings
         Label statusLabel = new Label(getResourceString("user_status"));
-        TextField statusField = new TextField(deviceManager.getUserStatus());
+        TextField statusField = new TextField(deviceManager.getStatus());
         Button applyStatusButton = new Button(getResourceString("apply_status"));
         applyStatusButton.getStyleClass().add("action-button");
         applyStatusButton.setOnAction(e -> {
-            deviceManager.setUserStatus(statusField.getText());
-            notify(getResourceString("status_updated") + statusField.getText());
+            deviceManager.setStatus(statusField.getText());
+            notify(getResourceString("status_updated") + " " + statusField.getText());
         });
 
         // Update Settings
         Label updateLabel = new Label(getResourceString("check_update"));
         updateNotesArea = new TextArea();
-        updateNotesArea.setEditable(false);
+        updateNotesArea.setEditable(true);
         updateNotesArea.setPrefHeight(100);
         Button checkUpdateButton = new Button(getResourceString("check_update"));
         checkUpdateButton.getStyleClass().add("action-button");
@@ -206,11 +209,11 @@ public class SettingsTab {
         settingsBox.getChildren().addAll(
                 new HBox(10, profileLabel, profileField, updateProfileButton),
                 avatarButton,
-                new HBox(10, speedLimitLabel, speedLimitField, applySpeedLimitButton),
+                new HBox(10, speedLimitLabel, speedLimitField, applySpeedLimit),
                 autoBandwidthCheckBox,
                 new HBox(10, languageLabel, languageCombo, applyLanguageButton),
-                new HBox(10, themeLabel, themeCombo, applyThemeButton),
-                logBackupButton,
+                new HBox(10, 10, themeLabel, themeCombo, applyThemeButton),
+                logBackup,
                 new HBox(10, savePathLabel, savePathField, chooseSavePathButton),
                 notificationCheckBox,
                 notificationSoundButton,
@@ -219,7 +222,7 @@ public class SettingsTab {
         );
 
         ScrollPane scrollPane = new ScrollPane(settingsBox);
-        scrollPane.setFitToWidth(true);
+        scrollPane.setFitWidth(true);
         settingsTab.setContent(scrollPane);
         return settingsTab;
     }
@@ -229,53 +232,64 @@ public class SettingsTab {
         progressBar.setVisible(true);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.submit(() -> {
-            try {
-                // P2P-based update check (simulated)
-                String targetDevice = deviceManager.getDiscoveredDevices().keySet().iterator().next();
-                String address = deviceManager.getDiscoveredDevices().get(targetDevice);
-                try (var socket = securityManager.createSSLSocket(address, 12345)) {
-                    socket.startHandshake();
-                    try (var dos = new DataOutputStream(socket.getOutputStream());
-                         var dis = new DataInputStream(socket.getInputStream())) {
-                        dos.writeUTF("UPDATE_CHECK");
-                        String response = dis.readUTF();
-                        // Parse response (simulated JSON)
-                        Map<String, String> metadata = parseUpdateResponse(response);
-                        String version = metadata.getOrDefault("version", "unknown");
-                        String developer = metadata.getOrDefault("developer_id", "unknown");
-                        String patchNotes = metadata.getOrDefault("patch_notes", "");
-                        String signature = metadata.getOrDefault("signature", "");
+            int retries = 3;
+            while (retries > 0) {
+                try {
+                    if (deviceManager.getDiscoveredDevices().isEmpty()) {
+                        throw new IOException("No devices available for update check");
+                    }
+                    String targetDevice = deviceManager.getDiscoveredDevices().keySet().iterator().next();
+                    String address = deviceManager.getDiscoveredDevices().get(targetDevice);
+                    try (var socket = securityManager.createSSLSocket(address, 12345)) {
+                        socket.startHandshake();
+                        try (var dos = new DataOutputStream(socket.getOutputStream());
+                             var dis = new DataInputStream(socket.getInputStream())) {
+                            dos.writeUTF("UPDATE_CHECK");
+                            String response = dis.readUTF();
+                            Map<String, String> metadata = parseUpdateResponse(response);
+                            String version = metadata.getOrDefault("version", "unknown");
+                            String developer = metadata.getOrDefault("developer_id", "unknown");
+                            String patchNotes = metadata.getOrDefault("patch_notes", "");
+                            String signature = metadata.getOrDefault("signature", "");
 
-                        PlatformManager.runLater(() -> {
-                            updateNotesArea.setText(String.format("%s\n%s: %s\n%s", 
-                                    getResourceString("patch_notes"), 
-                                    getResourceString("version"), version, patchNotes));
-                            progressBar.setProgress(0.5);
-                        });
+                            Platform.runLater(() -> {
+                                updateNotesArea.setText(String.format("%s\n%s: %s\n%s", 
+                                        getResourceString("patch_notes"), 
+                                        getResourceString("version"), version, patchNotes));
+                                progressBar.setProgress(0.5);
+                            });
 
-                        // Receive update JAR
-                        File tempFile = File.createTempFile("update", ".jar");
-                        receiveUpdateFile(tempFile, dis);
-                        boolean isMainDeveloper = developer.equals(MAIN_DEVELOPER_ID);
-                        boolean isSigned = signature.isEmpty() ? false : 
-                            securityManager.verifySignature(tempFile, signature, getPublicKey());
+                            File tempFile = File.createTempFile("update", ".jar");
+                            receiveUpdateFile(tempFile, dis);
+                            boolean isMainDeveloper = developer.equals(MAIN_DEVELOPER_ID);
+                            boolean isSigned = signature.isEmpty() ? false : 
+                                securityManager.verifySignature(tempFile, signature, securityManager.getPublicKey());
 
-                        PlatformManager.runLater(() -> {
-                            progressBar.setProgress(1.0);
+                            Platform.runLater(() -> {
+                                progressBar.setProgress(1.0);
+                                progressBar.setVisible(false);
+                                applyUpdate(tempFile, version, developer, isMainDeveloper, isSigned, patchNotes);
+                            });
+                            return;
+                        }
+                    }
+                } catch (Exception e) {
+                    retries--;
+                    if (retries == 0) {
+                        Platform.runLater(() -> {
+                            updateNotesArea.setText("Update check error: " + e.getMessage());
                             progressBar.setVisible(false);
-                            applyUpdate(tempFile, version, developer, isMainDeveloper, isSigned, patchNotes);
+                            databaseManager.logUpdateActivity("Update check failed: " + e.getMessage(), "unknown", "unknown", false);
                         });
                     }
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
-            } catch (Exception e) {
-                PlatformManager.runLater(() -> {
-                    updateNotesArea.setText("Update check error: " + e.getMessage());
-                    progressBar.setVisible(false);
-                    databaseManager.logUpdateActivity("Update check failed: " + e.getMessage());
-                });
-            } finally {
-                executor.shutdown();
             }
+            executor.shutdown();
         });
     }
 
@@ -292,51 +306,53 @@ public class SettingsTab {
                 String signature = metadata.getOrDefault("signature", "");
                 boolean isMainDeveloper = developer.equals(MAIN_DEVELOPER_ID);
                 boolean isSigned = signature.isEmpty() ? false : 
-                             securityManager.verifySignature(file, signature, getPublicKey());
+                             securityManager.verifySignature(file, signature, securityManager.getPublicKey());
 
-                PlatformManager.runLater(() -> {
+                Platform.runLater(() -> {
                     progressBar.setVisible(false);
                     applyUpdate(file, version, developer, isMainDeveloper, isSigned, "");
                 });
             } catch (IOException e) {
-                PlatformManager.runLater(() -> {
+                Platform.runLater(() -> {
                     progressBar.setVisible(false);
                     notify("Metadata parsing error: " + e.getMessage());
-                    databaseManager.logUpdateActivity("Manual update metadata parsing failed: " + e.getMessage());
+                    databaseManager.logUpdateActivity("Manual update metadata parsing failed: " + e.getMessage(), "unknown", "unknown", false);
                 });
             }
         }
     }
 
     private void applyUpdate(File updateFile, String version, String developer, boolean isMainDeveloper, boolean isSigned, String patchNotes) {
+        if (!isSigned && isMainDeveloper) {
+            notify("Signature verification failed for main developer update.");
+            databaseManager.logUpdateActivity("Signature verification failed", version, developer, false);
+            return;
+        }
+
         Runnable apply = () -> {
             try {
-                Files.copy(updateFile.toPath(), Paths.get("backup.jar"), StandardCopyOption.REPLACE_EXISTING);
-                installAndRestart(updateFile);
-                databaseManager.logUpdateActivity(String.format("Applied %s update v%s", 
-                        isMainDeveloper ? "main developer" : "third-party", version));
-                notify(getResourceString(isMainDeveloper ? "update_completed" : "manual_update_applied"));
+                securityManager.testInSandbox(updateFile);
+                installUpdate(updateFile, version, developer, isMainDeveloper);
             } catch (IOException e) {
                 rollbackUpdate();
-                databaseManager.logUpdateActivity(String.format("%s update v%s failed: %s", 
-                        isMainDeveloper ? "Main developer" : "Third-party", version, e.getMessage()));
+                databaseManager.logUpdateActivity("Update failed: " + e.getMessage(), version, developer, false);
                 notify("Update error: " + e.getMessage());
             }
         };
 
         if (!isMainDeveloper || !isSigned) {
-            showThirdPartyWarning(updateFile, apply);
+            showThirdPartyWarning(updateFile, apply, developer, version);
         } else {
             apply.run();
         }
     }
 
-    private void showThirdPartyWarning(File updateFile, Runnable onConfirm) {
-        PlatformManager.runLater(() -> {
+    private void showThirdPartyWarning(File updateFile, Runnable onConfirm, String developer, String version) {
+        Platform.runLater(() -> {
             Alert alert = new Alert(Alert.AlertType.WARNING);
             alert.setTitle(getResourceString("third_party_warning"));
-            alert.setHeaderText("This update is from a third-party developer.");
-            alert.setContentText("Applying this update may pose risks. Proceed with caution.");
+            alert.setHeaderText("Third-party update detected (Developer: " + developer + ", Version: " + version + ")");
+            alert.setContentText("This update is not from the main developer. It may contain unverified or malicious code. Proceed only if you trust the source.");
             alert.getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
             alert.showAndWait().ifPresent(type -> {
                 if (type == ButtonType.OK) {
@@ -348,49 +364,94 @@ public class SettingsTab {
 
     private void rollbackUpdate() {
         try {
-            Files.copy(Paths.get("backup.jar"), Paths.get("system.jar"), StandardCopyOption.REPLACE_EXISTING);
-            databaseManager.logUpdateActivity("Update rolled back");
-            PlatformManager.runLater(() -> updateNotesArea.setText(getResourceString("update_rolled_back")));
+            File backup = new File("backup.jar");
+            if (backup.exists() && verifyFileIntegrity(backup)) {
+                Files.copy(backup.toPath(), Paths.get("system.jar"), StandardCopyOption.REPLACE_EXISTING);
+                databaseManager.logUpdateActivity("Update rolled back", "unknown", "unknown", true);
+                Platform.runLater(() -> updateNotesArea.setText(getResourceString("update_rolled_back")));
+            } else {
+                throw new IOException("Backup file is corrupted or missing.");
+            }
         } catch (IOException e) {
-            databaseManager.logUpdateActivity("Rollback failed: " + e.getMessage());
-            PlatformManager.runLater(() -> updateNotesArea.setText("Rollback error: " + e.getMessage()));
+            databaseManager.logUpdateActivity("Rollback failed: " + e.getMessage(), "unknown", "unknown", false);
+            Platform.runLater(() -> updateNotesArea.setText("Rollback error: " + e.getMessage()));
         }
+    }
+
+    private void installUpdate(File updateFile, String version, String developer, boolean isMainDeveloper) throws IOException {
+        Files.copy(updateFile.toPath(), Paths.get("backup.jar"), StandardCopyOption.REPLACE_EXISTING);
+        installAndRestart(updateFile);
+        databaseManager.logUpdateActivity("Applied update", version, developer, true);
+        notify(getResourceString(isMainDeveloper ? "update_completed" : "manual_update_applied"));
     }
 
     private void installAndRestart(File file) throws IOException {
         String jarPath = file.getAbsolutePath();
         Files.copy(file.toPath(), Paths.get("system_new.jar"), StandardCopyOption.REPLACE_EXISTING);
         ProcessBuilder pb = new ProcessBuilder("java", "-jar", "system_new.jar");
-        pb.start();
-        databaseManager.logUpdateActivity("Application restarted for update");
-        PlatformManager.exit();
+        try {
+            Process process = pb.start();
+            databaseManager.logUpdateActivity("Application restarted for update", "unknown", "unknown", true);
+            Platform.exit();
+        } catch (IOException e) {
+            notify("Failed to start new version: " + e.getMessage());
+            databaseManager.logUpdateActivity("Restart failed: " + e.getMessage(), "unknown", "unknown", false);
+            throw e;
+        }
     }
 
     private Map<String, String> parseUpdateMetadata(File jarFile) throws IOException {
-        // Simplified; use Jackson or similar in production
+        try (JarFile jar = new JarFile(jarFile)) {
+            JarEntry entry = jar.getJarEntry("update.json");
+            if (entry != null) {
+                ObjectMapper mapper = new ObjectMapper();
+                try (InputStream is = jar.getInputStream(entry)) {
+                    return mapper.readValue(is, TypeFactory.defaultInstance().constructMapType(Map.class, String.class, String.class));
+                }
+            }
+        }
         return Map.of("version", "unknown", "developer_id", "unknown", "signature", "");
     }
 
     private Map<String, String> parseUpdateResponse(String response) {
-        // Simplified; parse JSON in production
-        return Map.of("version", "1.2.3", "developer_id", "third_party_dev_uuid", 
-                      "patch_notes", "Custom enhancements", "signature", "dummy_signature");
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            return mapper.readValue(response, TypeFactory.defaultInstance().constructMapType(Map.class, String.class, String.class));
+        } catch (IOException e) {
+            return Map.of("version", "unknown", "developer_id", "unknown", "patch_notes", "", "signature", "");
+        }
     }
 
     private void receiveUpdateFile(File tempFile, DataInputStream dis) throws IOException {
-        // Simplified; implement actual file transfer
+        long totalSize = dis.readLong();
+        long received = 0;
         try (FileOutputStream fos = new FileOutputStream(tempFile)) {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = dis.read(buffer)) != -1) {
                 fos.write(buffer, 0, read);
+                received += read;
+                double progress = (double) received / totalSize;
+                Platform.runLater(() -> progressBar.setProgress(progress));
             }
         }
     }
 
-    private PublicKey getPublicKey() {
-        // Placeholder; load actual public key
-        return null;
+    private boolean verifyFileIntegrity(File file) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = fis.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+            // Compare with stored hash (assumed to be stored elsewhere)
+            return true; // Placeholder
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public static boolean isNotificationsEnabled() {
@@ -406,6 +467,6 @@ public class SettingsTab {
     }
 
     private void notify(String message) {
-        PlatformManager.runLater(() -> System.out.println(message));
+        Platform.runLater(() -> System.out.println(message));
     }
 }
