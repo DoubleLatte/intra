@@ -1,224 +1,240 @@
 package filesharing.main;
 
+import java.io.*;
 import java.sql.*;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVPrinter;
-import java.io.FileWriter;
-import java.util.concurrent.ConcurrentHashMap;
-import javafx.application.Platform;
+import java.time.LocalDateTime;
+import java.util.UUID;
+import org.apache.commons.csv.*;
 
 public class DatabaseManager {
-    private static final String DB_URL = "jdbc:sqlite:transfer_log.db";
-    private static final String CHAT_DB_URL = "jdbc:sqlite:chat_log.db";
-    private static final String USERBOOK_DB_URL = "jdbc:sqlite:userbook.db";
-    private static final String TAG_DB_URL = "jdbc:sqlite:tag_log.db";
-    private static final String CONTACT_DB_URL = "jdbc:sqlite:contact.db";
-    private static final String DOWNLOAD_DB_URL = "jdbc:sqlite:download_log.db";
-    private static Map<String, Boolean> userFileBlock = new ConcurrentHashMap<>();
-    private static Map<String, Boolean> userMessageBlock = new ConcurrentHashMap<>();
-    private static Map<String, String> contactGrades = new ConcurrentHashMap<>();
+    private static final String TRANSFER_DB = "transfers.db";
+    private static final String CHAT_DB = "chats.db";
+    private static final String DOWNLOAD_DB = "downloads.db";
+    private static final String ACTIVITY_DB = "activities.db";
+    private static final String VERSION_DB = "versions.db";
 
-    public void initDatabases() {
-        try (Connection conn = DriverManager.getConnection(DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, file_name TEXT, type TEXT, size LONG, metadata TEXT, timestamp TEXT)";
-            conn.createStatement().execute(sql);
+    public DatabaseManager() {
+        initDatabases();
+    }
+
+    private void initDatabases() {
+        try (Connection conn = getTransferConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS transfers (file_name TEXT, type TEXT, size INTEGER, timestamp TEXT, metadata TEXT)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS tags (file_name TEXT, tags TEXT, timestamp TEXT)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS blocked_users (uuid TEXT, block_files BOOLEAN, block_messages BOOLEAN)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS contacts (uuid TEXT PRIMARY KEY, grade TEXT)");
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, message TEXT, type TEXT, timestamp TEXT)";
-            conn.createStatement().execute(sql);
+
+        try (Connection conn = getChatConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS chats (uuid TEXT, message TEXT, type TEXT, timestamp TEXT)");
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        try (Connection conn = DriverManager.getConnection(USERBOOK_DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS userbook (uuid TEXT PRIMARY KEY, file_block BOOLEAN, message_block BOOLEAN)";
-            conn.createStatement().execute(sql);
+
+        try (Connection conn = getDownloadConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS downloads (file_name TEXT, timestamp TEXT, metadata TEXT)");
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        try (Connection conn = DriverManager.getConnection(TAG_DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS tags (file_name TEXT, tags TEXT, timestamp TEXT)";
-            conn.createStatement().execute(sql);
+
+        try (Connection conn = getActivityConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS activities (uuid TEXT, action TEXT, timestamp TEXT)");
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        try (Connection conn = DriverManager.getConnection(CONTACT_DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS contacts (uuid TEXT PRIMARY KEY, grade TEXT)";
-            conn.createStatement().execute(sql);
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        try (Connection conn = DriverManager.getConnection(DOWNLOAD_DB_URL)) {
-            String sql = "CREATE TABLE IF NOT EXISTS downloads (id INTEGER PRIMARY KEY AUTOINCREMENT, file_name TEXT, metadata TEXT, timestamp TEXT)";
-            conn.createStatement().execute(sql);
+
+        try (Connection conn = getVersionConnection()) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS versions (file_name TEXT, version_name TEXT, size INTEGER, hash TEXT, timestamp TEXT)");
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
+    public Connection getTransferConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + TRANSFER_DB);
+    }
+
+    public Connection getChatConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + CHAT_DB);
+    }
+
+    public Connection getDownloadConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + DOWNLOAD_DB);
+    }
+
+    public Connection getActivityConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + ACTIVITY_DB);
+    }
+
+    public Connection getVersionConnection() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + VERSION_DB);
+    }
+
     public void logTransfer(String fileName, String type, long size, String metadata) {
-        try (Connection conn = DriverManager.getConnection(DB_URL)) {
-            String sql = "INSERT INTO transfers (file_name, type, size, metadata, timestamp) VALUES (?, ?, ?, ?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, fileName);
-                pstmt.setString(2, type);
-                pstmt.setLong(3, size);
-                pstmt.setString(4, metadata);
-                pstmt.setString(5, new java.util.Date().toString());
-                pstmt.executeUpdate();
-            }
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO transfers (file_name, type, size, timestamp, metadata) VALUES (?, ?, ?, ?, ?)")) {
+            pstmt.setString(1, fileName);
+            pstmt.setString(2, type);
+            pstmt.setLong(3, size);
+            pstmt.setString(4, LocalDateTime.now().toString());
+            pstmt.setString(5, metadata);
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
     public void logChat(String uuid, String message, String type) {
-        try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
-            String sql = "INSERT INTO chats (uuid, message, type, timestamp) VALUES (?, ?, ?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, uuid);
-                pstmt.setString(2, message);
-                pstmt.setString(3, type);
-                pstmt.setString(4, new java.util.Date().toString());
-                pstmt.executeUpdate();
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void logTags(String fileName, String tags) {
-        try (Connection conn = DriverManager.getConnection(TAG_DB_URL)) {
-            String sql = "INSERT INTO tags (file_name, tags, timestamp) VALUES (?, ?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, fileName);
-                pstmt.setString(2, tags);
-                pstmt.setString(3, new java.util.Date().toString());
-                pstmt.executeUpdate();
-            }
+        try (Connection conn = getChatConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO chats (uuid, message, type, timestamp) VALUES (?, ?, ?, ?)")) {
+            pstmt.setString(1, uuid);
+            pstmt.setString(2, message);
+            pstmt.setString(3, type);
+            pstmt.setString(4, LocalDateTime.now().toString());
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
     public void logDownload(String fileName, String metadata) {
-        try (Connection conn = DriverManager.getConnection(DOWNLOAD_DB_URL)) {
-            String sql = "INSERT INTO downloads (file_name, metadata, timestamp) VALUES (?, ?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, fileName);
-                pstmt.setString(2, metadata);
-                pstmt.setString(3, new java.util.Date().toString());
-                pstmt.executeUpdate();
-            }
+        try (Connection conn = getDownloadConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO downloads (file_name, timestamp, metadata) VALUES (?, ?, ?)")) {
+            pstmt.setString(1, fileName);
+            pstmt.setString(2, LocalDateTime.now().toString());
+            pstmt.setString(3, metadata);
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
-    public void blockUser(String uuid, boolean fileBlock, boolean messageBlock) {
-        userFileBlock.put(uuid, fileBlock);
-        userMessageBlock.put(uuid, messageBlock);
-        try (Connection conn = DriverManager.getConnection(USERBOOK_DB_URL)) {
-            String sql = "INSERT OR REPLACE INTO userbook (uuid, file_block, message_block) VALUES (?, ?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, uuid);
-                pstmt.setBoolean(2, fileBlock);
-                pstmt.setBoolean(3, messageBlock);
-                pstmt.executeUpdate();
-            }
+    public void logTags(String fileName, String tags) {
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO tags (file_name, tags, timestamp) VALUES (?, ?, ?)")) {
+            pstmt.setString(1, fileName);
+            pstmt.setString(2, tags);
+            pstmt.setString(3, LocalDateTime.now().toString());
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void logActivity(String uuid, String action) {
+        try (Connection conn = getActivityConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO activities (uuid, action, timestamp) VALUES (?, ?, ?)")) {
+            pstmt.setString(1, uuid);
+            pstmt.setString(2, action);
+            pstmt.setString(3, LocalDateTime.now().toString());
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void logFileVersion(String fileName, String versionName, long size, String hash) {
+        try (Connection conn = getVersionConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT INTO versions (file_name, version_name, size, hash, timestamp) VALUES (?, ?, ?, ?, ?)")) {
+            pstmt.setString(1, fileName);
+            pstmt.setString(2, versionName);
+            pstmt.setLong(3, size);
+            pstmt.setString(4, hash);
+            pstmt.setString(5, LocalDateTime.now().toString());
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void blockUser(String uuid, boolean blockFiles, boolean blockMessages) {
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT OR REPLACE INTO blocked_users (uuid, block_files, block_messages) VALUES (?, ?, ?)")) {
+            pstmt.setString(1, uuid);
+            pstmt.setBoolean(2, blockFiles);
+            pstmt.setBoolean(3, blockMessages);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public boolean isFileBlocked(String uuid) {
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("SELECT block_files FROM blocked_users WHERE uuid = ?")) {
+            pstmt.setString(1, uuid);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next() && rs.getBoolean("block_files");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean isMessageBlocked(String uuid) {
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("SELECT block_messages FROM blocked_users WHERE uuid = ?")) {
+            pstmt.setString(1, uuid);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next() && rs.getBoolean("block_messages");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
         }
     }
 
     public void setContactGrade(String uuid, String grade) {
-        contactGrades.put(uuid, grade);
-        try (Connection conn = DriverManager.getConnection(CONTACT_DB_URL)) {
-            String sql = "INSERT OR REPLACE INTO contacts (uuid, grade) VALUES (?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setString(1, uuid);
-                pstmt.setString(2, grade);
-                pstmt.executeUpdate();
-            }
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("INSERT OR REPLACE INTO contacts (uuid, grade) VALUES (?, ?)")) {
+            pstmt.setString(1, uuid);
+            pstmt.setString(2, grade);
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
-    public void exportBackup(String backupPath) throws Exception {
-        try (CSVPrinter printer = new CSVPrinter(new FileWriter(backupPath), CSVFormat.DEFAULT)) {
-            printer.printRecord("ID", "File Name", "Type", "Size", "Metadata", "Timestamp");
-            try (Connection conn = DriverManager.getConnection(DB_URL)) {
-                ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM transfers");
-                while (rs.next()) {
-                    printer.printRecord(rs.getInt("id"), rs.getString("file_name"),
-                            rs.getString("type"), rs.getLong("size"),
-                            rs.getString("metadata"), rs.getString("timestamp"));
-                }
-            }
-            try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
-                ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM chats");
-                printer.printRecord("Chats");
-                printer.printRecord("ID", "UUID", "Message", "Type", "Timestamp");
-                while (rs.next()) {
-                    printer.printRecord(rs.getInt("id"), rs.getString("uuid"),
-                            rs.getString("message"), rs.getString("type"), rs.getString("timestamp"));
-                }
-            }
+    public String getContactGrade(String uuid) {
+        try (Connection conn = getTransferConnection();
+             PreparedStatement pstmt = conn.prepareStatement("SELECT grade FROM contacts WHERE uuid = ?")) {
+            pstmt.setString(1, uuid);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next() ? rs.getString("grade") : "Green";
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return "Green";
         }
     }
 
-    public void startLogCleanup() {
-        new Thread(() -> {
-            while (true) {
-                try {
-                    try (Connection conn = DriverManager.getConnection(DB_URL)) {
-                        String sql = "DELETE FROM transfers WHERE timestamp < datetime('now', '-30 days')";
-                        conn.createStatement().executeUpdate(sql);
-                    }
-                    try (Connection conn = DriverManager.getConnection(CHAT_DB_URL)) {
-                        String sql = "DELETE FROM chats WHERE timestamp < datetime('now', '-30 days')";
-                        conn.createStatement().executeUpdate(sql);
-                    }
-                    Platform.runLater(() -> notify(getResourceString("log_cleanup_completed")));
-                    Thread.sleep(86400000); // 1일
-                } catch (Exception e) {
-                    Platform.runLater(() -> notify("Log cleanup error: " + e.getMessage()));
-                }
+    public void exportBackup(String backupPath) throws SQLException, IOException {
+        try (Connection transferConn = getTransferConnection();
+             Connection chatConn = getChatConnection();
+             CSVPrinter printer = new CSVPrinter(new FileWriter(backupPath), CSVFormat.DEFAULT.withHeader("table", "data"))) {
+            Statement stmt = transferConn.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT * FROM transfers");
+            while (rs.next()) {
+                printer.printRecord("transfers", String.format("%s,%s,%d,%s,%s",
+                        rs.getString("file_name"), rs.getString("type"), rs.getLong("size"),
+                        rs.getString("timestamp"), rs.getString("metadata")));
             }
-        }).start();
-    }
-
-    public boolean isFileBlocked(String uuid) {
-        return userFileBlock.getOrDefault(uuid, false);
-    }
-
-    public boolean isMessageBlocked(String uuid) {
-        return userMessageBlock.getOrDefault(uuid, false);
-    }
-
-    public String getContactGrade(String uuid) {
-        return contactGrades.getOrDefault(uuid, "Green");
-    }
-
-    public Connection getTransferConnection() throws SQLException {
-        return DriverManager.getConnection(DB_URL);
-    }
-
-    public Connection getChatConnection() throws SQLException {
-        return DriverManager.getConnection(CHAT_DB_URL);
-    }
-
-    public Connection getDownloadConnection() throws SQLException {
-        return DriverManager.getConnection(DOWNLOAD_DB_URL);
-    }
-
-    private String getResourceString(String key) {
-        return java.util.ResourceBundle.getBundle("messages", java.util.Locale.getDefault()).getString(key);
-    }
-
-    private void notify(String message) {
-        Platform.runLater(() -> System.out.println(message)); // UIManager로 전달
+            rs = stmt.executeQuery("SELECT * FROM tags");
+            while (rs.next()) {
+                printer.printRecord("tags", String.format("%s,%s,%s",
+                        rs.getString("file_name"), rs.getString("tags"), rs.getString("timestamp")));
+            }
+            stmt = chatConn.createStatement();
+            rs = stmt.executeQuery("SELECT * FROM chats");
+            while (rs.next()) {
+                printer.printRecord("chats", String.format("%s,%s,%s,%s",
+                        rs.getString("uuid"), rs.getString("message"), rs.getString("type"), rs.getString("timestamp")));
+            }
+        }
     }
 }

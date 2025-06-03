@@ -16,6 +16,8 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import java.io.File;
 import java.nio.file.Files;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
 
 public class UIManager {
@@ -23,6 +25,7 @@ public class UIManager {
     private final ChatManager chatManager;
     private final FileTransferManager fileTransferManager;
     private final StatsManager statsManager;
+    private final DatabaseManager databaseManager;
     private ListView<String> deviceListView;
     private TextArea chatArea;
     private TextField chatInput;
@@ -32,12 +35,14 @@ public class UIManager {
     private ListView<String> userListView;
     private static String avatarPath = "";
     private Label statusLabel;
+    private Label notificationBadge;
 
     public UIManager(DeviceManager deviceManager, ChatManager chatManager, FileTransferManager fileTransferManager, StatsManager statsManager) {
         this.deviceManager = deviceManager;
         this.chatManager = chatManager;
         this.fileTransferManager = fileTransferManager;
         this.statsManager = statsManager;
+        this.databaseManager = new DatabaseManager();
     }
 
     public Tab createMainTab() {
@@ -59,7 +64,12 @@ public class UIManager {
         settingsButton.setTooltip(new Tooltip(getResourceString("settings_tab")));
         addButtonAnimation(settingsButton);
         settingsButton.setOnAction(e -> openSettings());
-        VBox sidebar = new VBox(15, new Label(getResourceString("device_list")), deviceListView, 
+        notificationBadge = new Label("0");
+        notificationBadge.getStyleClass().add("notification-badge");
+        notificationBadge.setVisible(false);
+        StackPane deviceListPane = new StackPane(deviceListView, notificationBadge);
+        StackPane.setAlignment(notificationBadge, Pos.TOP_RIGHT);
+        VBox sidebar = new VBox(15, new Label(getResourceString("device_list")), deviceListPane, 
                                new HBox(10, avatarView, statusLabel), settingsButton);
         sidebar.getStyleClass().add("sidebar");
         sidebar.setAlignment(Pos.TOP_CENTER);
@@ -104,8 +114,15 @@ public class UIManager {
         Button cancelTransferButton = new Button(getResourceString("cancel_transfer"));
         cancelTransferButton.getStyleClass().add("action-button");
         addButtonAnimation(cancelTransferButton);
+        Button viewActivityLogButton = new Button(getResourceString("view_activity_log"));
+        viewActivityLogButton.getStyleClass().add("action-button");
+        addButtonAnimation(viewActivityLogButton);
+        Button viewFileVersionsButton = new Button(getResourceString("view_file_versions"));
+        viewFileVersionsButton.getStyleClass().add("action-button");
+        addButtonAnimation(viewFileVersionsButton);
         VBox rightPanel = new VBox(15, new Label(getResourceString("users")), userListView, 
-                                  sendFileButton, viewStatsButton, cancelTransferButton);
+                                  sendFileButton, viewStatsButton, cancelTransferButton, 
+                                  viewActivityLogButton, viewFileVersionsButton);
         rightPanel.getStyleClass().add("right-panel");
         rightPanel.setPadding(new Insets(20, 10, 10, 10));
 
@@ -117,11 +134,24 @@ public class UIManager {
         tab.setContent(layout);
 
         // Event Handlers
-        sendChatButton.setOnAction(e -> chatManager.sendChat(deviceListView.getSelectionModel().getSelectedItem(), chatInput.getText(), chatArea, chatInput));
+        sendChatButton.setOnAction(e -> {
+            chatManager.sendChat(deviceListView.getSelectionModel().getSelectedItem(), chatInput.getText(), chatArea, chatInput);
+            chatManager.clearNotification(deviceListView.getSelectionModel().getSelectedItem());
+            updateNotificationBadge();
+        });
         sendFileButton.setOnAction(e -> fileTransferManager.sendFileOrFolder(deviceListView.getSelectionModel().getSelectedItem(), new TextInputDialog(), progressBar));
         searchButton.setOnAction(e -> searchChatLog());
         cancelTransferButton.setOnAction(e -> fileTransferManager.cancelTransfer(deviceListView.getSelectionModel().getSelectedItem()));
         viewStatsButton.setOnAction(e -> statsManager.showDashboard());
+        viewActivityLogButton.setOnAction(e -> showActivityLog());
+        viewFileVersionsButton.setOnAction(e -> showFileVersions());
+        deviceListView.getSelectionModel().selectedItemProperty().addListener((obs, old, newValue) -> {
+            if (newValue != null) {
+                chatManager.clearNotification(newValue);
+                fileTransferManager.clearNotification(newValue);
+                updateNotificationBadge();
+            }
+        });
 
         // Drag and Drop for File Transfer
         chatArea.setOnDragOver(event -> {
@@ -176,8 +206,12 @@ public class UIManager {
             deviceListView.getItems().clear();
             deviceManager.getDiscoveredDevices().forEach((name, address) -> {
                 String status = deviceManager.getUserStatuses().getOrDefault(name, "Online");
-                deviceListView.getItems().add(name + " (" + status + ")");
+                Integer notifications = fileTransferManager.getPendingNotifications().getOrDefault(name, 0) +
+                                       chatManager.getPendingNotifications().getOrDefault(name, 0);
+                String display = name + " (" + status + ")" + (notifications > 0 ? " [" + notifications + "]" : "");
+                deviceListView.getItems().add(display);
             });
+            updateNotificationBadge();
         });
     }
 
@@ -188,6 +222,15 @@ public class UIManager {
                 String status = deviceManager.getUserStatuses().getOrDefault(name, "Online");
                 userListView.getItems().add(name + " - " + status);
             });
+        });
+    }
+
+    private void updateNotificationBadge() {
+        Platform.runLater(() -> {
+            int totalNotifications = fileTransferManager.getPendingNotifications().values().stream().mapToInt(Integer::intValue).sum() +
+                                    chatManager.getPendingNotifications().values().stream().mapToInt(Integer::intValue).sum();
+            notificationBadge.setText(String.valueOf(totalNotifications));
+            notificationBadge.setVisible(totalNotifications > 0);
         });
     }
 
@@ -215,6 +258,67 @@ public class UIManager {
             searchStage.setTitle(getResourceString("chat_search_results"));
             searchStage.setScene(new Scene(new VBox(new Label(getResourceString("chat_search_results")), logView), 400, 300));
             searchStage.show();
+        }
+    }
+
+    private void showActivityLog() {
+        ListView<String> logView = new ListView<>();
+        try (var conn = databaseManager.getActivityConnection()) {
+            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM activities");
+            while (rs.next()) {
+                logView.getItems().add(String.format("%s: %s at %s",
+                        rs.getString("uuid"), rs.getString("action"), rs.getString("timestamp")));
+            }
+        } catch (SQLException e) {
+            notify("Activity log error: " + e.getMessage());
+        }
+        Stage logStage = new Stage();
+        logStage.setTitle(getResourceString("activity_log"));
+        logStage.setScene(new Scene(new VBox(new Label(getResourceString("activity_log")), logView), 400, 300));
+        logStage.show();
+    }
+
+    private void showFileVersions() {
+        ListView<String> versionView = new ListView<>();
+        try (var conn = databaseManager.getVersionConnection()) {
+            ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM versions");
+            while (rs.next()) {
+                versionView.getItems().add(String.format("%s (Version: %s, Size: %d, Hash: %s) at %s",
+                        rs.getString("file_name"), rs.getString("version_name"), rs.getLong("size"),
+                        rs.getString("hash"), rs.getString("timestamp")));
+            }
+        } catch (SQLException e) {
+            notify("File version error: " + e.getMessage());
+        }
+        versionView.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                String selected = versionView.getSelectionModel().getSelectedItem();
+                if (selected != null) {
+                    String versionName = selected.split("Version: ")[1].split(",")[0];
+                    restoreFileVersion(versionName);
+                }
+            }
+        });
+        Stage versionStage = new Stage();
+        versionStage.setTitle(getResourceString("view_file_versions"));
+        versionStage.setScene(new Scene(new VBox(new Label(getResourceString("file_versions")), versionView), 600, 400));
+        versionStage.show();
+    }
+
+    private void restoreFileVersion(String versionName) {
+        File versionFile = new File(fileTransferManager.getSavePath(), versionName);
+        if (versionFile.exists()) {
+            String originalName = versionName.split("\\.v")[0];
+            File originalFile = new File(fileTransferManager.getSavePath(), originalName);
+            try {
+                Files.copy(versionFile.toPath(), originalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                databaseManager.logActivity(deviceManager.getUserUUID(), "Restored file version: " + versionName + " to " + originalName);
+                notify(getResourceString("file_version_restored") + originalName);
+            } catch (IOException e) {
+                notify("Error restoring file version: " + e.getMessage());
+            }
+        } else {
+            notify(getResourceString("file_version_not_found"));
         }
     }
 

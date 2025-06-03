@@ -27,6 +27,7 @@ public class FileTransferManager {
     private final Map<String, Double> transferProgress = new ConcurrentHashMap<>();
     private final Map<String, Future<?>> transferTasks = new ConcurrentHashMap<>();
     private final SystemInfo systemInfo = new SystemInfo();
+    private final Map<String, Integer> pendingNotifications = new ConcurrentHashMap<>();
 
     public FileTransferManager(DeviceManager deviceManager, DatabaseManager databaseManager, SecurityManager securityManager) {
         this.deviceManager = deviceManager;
@@ -118,6 +119,7 @@ public class FileTransferManager {
                     }
                     databaseManager.logTransfer(fileName, "전송", sendFile.length(), metadata);
                     databaseManager.logTags(fileName, tags);
+                    databaseManager.logActivity(deviceManager.getUserUUID(), "File sent: " + fileName);
                     transferProgress.remove(fileName);
                     transferTasks.remove(fileName);
                     Platform.runLater(() -> {
@@ -169,7 +171,16 @@ public class FileTransferManager {
     private void receiveFileInternal(String fileName, long fileSize, String metadata, String expectedHash, String tags, DataInputStream dis, ProgressBar progressBar) throws Exception {
         File saveDir = new File(savePath);
         if (!saveDir.exists()) saveDir.mkdirs();
+        
+        // Version Management: Backup existing file
         File outputFile = new File(saveDir, fileName);
+        if (outputFile.exists()) {
+            String versionedName = fileName + ".v" + System.currentTimeMillis();
+            File versionedFile = new File(saveDir, versionedName);
+            Files.copy(outputFile.toPath(), versionedFile.toPath());
+            databaseManager.logFileVersion(fileName, versionedName, outputFile.length(), expectedHash);
+        }
+
         try (var fos = new FileOutputStream(outputFile);
              var outChannel = fos.getChannel()) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -199,6 +210,8 @@ public class FileTransferManager {
             databaseManager.logTransfer(fileName, "수신", fileSize, metadata);
             databaseManager.logTags(fileName, tags);
             databaseManager.logDownload(fileName, metadata);
+            databaseManager.logActivity(deviceManager.getUserUUID(), "File received: " + fileName);
+            pendingNotifications.merge(fileName, 1, Integer::sum);
             transferProgress.remove(fileName);
             Platform.runLater(() -> {
                 progressBar.setProgress(0);
@@ -213,6 +226,7 @@ public class FileTransferManager {
         if (task != null) {
             task.cancel(true);
             transferProgress.remove(fileName);
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Transfer cancelled: " + fileName);
             notify(getResourceString("transfer_cancelled") + fileName);
         }
     }
@@ -237,9 +251,8 @@ public class FileTransferManager {
     }
 
     private void throttleTransfer(long bytesRead, long startTime) {
-        long effectiveSpeed = transfer if (autoBandwidthLimit) {
-            long effectiveSpeedLimit = calculateDynamicBandwidthLimit();
-        } else if (transferSpeedLimit > 0) {
+        long effectiveSpeedLimit = autoBandwidthLimit ? calculateDynamicBandwidthLimit() : transferSpeedLimit;
+        if (effectiveSpeedLimit > 0) {
             long elapsed = System.currentTimeMillis() - startTime;
             long expectedTime = (bytesRead * 1000L) / effectiveSpeedLimit;
             if (elapsed < expectedTime) {
@@ -259,7 +272,7 @@ public class FileTransferManager {
             long bytesSent = nif.getBytesSent();
             long bytesRecv = nif.getBytesRecv();
             try {
-                Thread.sleep(1000); // 1초 대기
+                Thread.sleep(1000);
                 nif.updateAttributes();
                 long newBytesSent = nif.getBytesSent();
                 long newBytesRecv = nif.getBytesRecv();
@@ -268,7 +281,6 @@ public class FileTransferManager {
                 e.printStackTrace();
             }
         }
-        // 최대 대역폭의 50% 사용
         return Math.max(1024, totalBytesPerSec / 2);
     }
 
@@ -277,7 +289,7 @@ public class FileTransferManager {
             while (autoBandwidthLimit) {
                 transferSpeedLimit = calculateDynamicBandwidthLimit();
                 try {
-                    Thread.sleep(5000); // 5초마다 갱신
+                    Thread.sleep(5000);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -325,8 +337,9 @@ public class FileTransferManager {
                 try {
                     String backupPath = savePath + "/backup_" + System.currentTimeMillis() + ".csv";
                     databaseManager.exportBackup(backupPath);
+                    databaseManager.logActivity(deviceManager.getUserUUID(), "Backup created: " + backupPath);
                     Platform.runLater(() -> notify(getResourceString("auto_backup_completed") + backupPath));
-                    Thread.sleep(3600000); // 1시간
+                    Thread.sleep(3600000);
                 } catch (Exception e) {
                     Platform.runLater(() -> notify("Backup error: " + e.getMessage()));
                 }
@@ -334,11 +347,19 @@ public class FileTransferManager {
         }).start();
     }
 
+    public Map<String, Integer> getPendingNotifications() {
+        return pendingNotifications;
+    }
+
+    public void clearNotification(String fileName) {
+        pendingNotifications.remove(fileName);
+    }
+
     private String getResourceString(String key) {
         return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void notify(String message) {
-        Platform.runLater(() -> System.out.println(message)); // UIManager로 전달
+        Platform.runLater(() -> System.out.println(message));
     }
 }

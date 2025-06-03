@@ -11,8 +11,6 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
 
 public class ChatManager {
     private static final int MULTICAST_PORT = 4446;
@@ -24,6 +22,7 @@ public class ChatManager {
     private final DatabaseManager databaseManager;
     private final SecurityManager securityManager;
     private final ExecutorService chatExecutor = Executors.newFixedThreadPool(2);
+    private final Map<String, Integer> pendingNotifications = new ConcurrentHashMap<>();
 
     public ChatManager(DeviceManager deviceManager, DatabaseManager databaseManager, SecurityManager securityManager) {
         this.deviceManager = deviceManager;
@@ -51,6 +50,7 @@ public class ChatManager {
                         dos.writeUTF("CHAT");
                         dos.writeUTF(securityManager.encryptMessage(message));
                         databaseManager.logChat(deviceManager.getUserUUID(), message, "전송");
+                        databaseManager.logActivity(deviceManager.getUserUUID(), "Chat sent to " + target + ": " + message);
                         Platform.runLater(() -> chatArea.appendText(getResourceString("sent") + processMessage(message) + "\n"));
                         success = true;
                     }
@@ -81,9 +81,12 @@ public class ChatManager {
                 String encrypted = new String(packet.getData(), 0, packet.getLength());
                 String message = securityManager.decryptMessage(encrypted);
                 String senderUUID = message.split(":")[0].split("_")[1].trim();
+                String senderName = message.split(":")[0].split("_")[0].trim();
                 if (!databaseManager.isMessageBlocked(senderUUID)) {
                     databaseManager.logChat(senderUUID, message, "수신");
+                    databaseManager.logActivity(deviceManager.getUserUUID(), "Group chat received from " + senderName);
                     Platform.runLater(() -> notify(getResourceString("group") + processMessage(message)));
+                    pendingNotifications.merge(senderName + "_" + senderUUID, 1, Integer::sum);
                     if (SettingsTab.isNotificationsEnabled()) {
                         playNotificationSound();
                     }
@@ -91,6 +94,7 @@ public class ChatManager {
             }
         } catch (IOException e) {
             Platform.runLater(() -> notify("Multicast error: " + e.getMessage()));
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Multicast error: " + e.getMessage());
         }
     }
 
@@ -100,8 +104,10 @@ public class ChatManager {
             byte[] buffer = securityManager.encryptMessage(deviceManager.getUserName() + "_" + deviceManager.getUserUUID() + ": " + message).getBytes();
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length, group, MULTICAST_PORT);
             socket.send(packet);
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Group chat sent: " + message);
         } catch (IOException e) {
             Platform.runLater(() -> notify("Group chat error: " + e.getMessage()));
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Group chat error: " + e.getMessage());
         }
     }
 
@@ -119,6 +125,7 @@ public class ChatManager {
             }
         } catch (SQLException e) {
             Platform.runLater(() -> notify("Chat search error: " + e.getMessage()));
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Chat search error: " + e.getMessage());
         }
     }
 
@@ -128,6 +135,7 @@ public class ChatManager {
             mediaPlayer = new MediaPlayer(sound);
         } catch (Exception e) {
             Platform.runLater(() -> notify("Media player setup error: " + e.getMessage()));
+            databaseManager.logActivity(deviceManager.getUserUUID(), "Media player setup error: " + e.getMessage());
         }
     }
 
@@ -161,11 +169,22 @@ public class ChatManager {
         return map;
     }
 
+    public Map<String, Integer> getPendingNotifications() {
+        return pendingNotifications;
+    }
+
+    public void clearNotification(String target) {
+        if (target != null) {
+            String name = target.split(" \\(")[0];
+            pendingNotifications.remove(name);
+        }
+    }
+
     private String getResourceString(String key) {
         return ResourceBundle.getBundle("messages", Locale.getDefault()).getString(key);
     }
 
     private void notify(String message) {
-        Platform.runLater(() -> System.out.println(message)); // UIManager로 전달
+        Platform.runLater(() -> System.out.println(message));
     }
 }
