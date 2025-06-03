@@ -11,11 +11,9 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
-import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import java.io.File;
-import java.nio.file.Files;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
@@ -37,6 +35,7 @@ public class UIManager {
     private Label statusLabel;
     private Label notificationBadge;
     private BorderPane layout;
+    private final Set<String> shownUpdates = new HashSet<>(); // 알림 배너 중복 방지
 
     public UIManager(DeviceManager deviceManager, ChatManager chatManager, FileTransferManager fileTransferManager, StatsManager statsManager) {
         this.deviceManager = deviceManager;
@@ -119,13 +118,13 @@ public class UIManager {
         viewActivityLogButton.getStyleClass().add("action-button");
         addButtonAnimation(viewActivityLogButton);
         Button viewFileVersionsButton = new Button(getResourceString("view_file_versions"));
-        viewFileVersionsButton.getStyleClass().add("action-button");
+        viewFileVersionsButton.setStyleClass().add("action-button");
         addButtonAnimation(viewFileVersionsButton);
         VBox rightPanel = new VBox(15, new Label(getResourceString("users")), userListView, 
                                   sendFileButton, viewStatsButton, cancelTransferButton, 
                                   viewActivityLogButton, viewFileVersionsButton);
         rightPanel.getStyleClass().add("right-panel");
-        rightPanel.setPadding(new Insets(20, 10, 10, 10));
+        rightPanel.setPadding(new Insets(20, 15, 10, 5));
 
         // Main Layout
         layout = new BorderPane();
@@ -136,20 +135,20 @@ public class UIManager {
 
         // Event Handlers
         sendChatButton.setOnAction(e -> {
-            chatManager.sendChat(deviceListView.getSelectionModel().getSelectedItem(), chatInput.getText(), chatArea, chatInput);
-            chatManager.clearNotification(deviceListView.getSelectionModel().getSelectedItem());
+            chatManager.send(deviceListView.getSelectionModel().getSelectedItem(), chatInput.getText(), chatArea, chatInput);
+            chatManager.clearChat(deviceListView.getSelectionModel().getSelectedItem());
             updateNotificationBadge();
         });
-        sendFileButton.setOnAction(e -> fileTransferManager.sendFileOrFolder(deviceListView.getSelectionModel().getSelectedItem(), new TextInputDialog(), progressBar));
+        sendFileButton.setOnAction(e -> fileTransferManager.send(deviceListView.getSelectionModel().getSelectedItem(), new TextInputDialog(), progressBar));
         searchButton.setOnAction(e -> searchChatLog());
-        cancelTransferButton.setOnAction(e -> fileTransferManager.cancelTransfer(deviceListView.getSelectionModel().getSelectedItem()));
+        cancelTransferButton.setOnAction(e -> fileTransferManager.cancel(deviceListView.getSelectionModel().getSelectedItem()));
         viewStatsButton.setOnAction(e -> statsManager.showDashboard());
         viewActivityLogButton.setOnAction(e -> showActivityLog());
         viewFileVersionsButton.setOnAction(e -> showFileVersions());
         deviceListView.getSelectionModel().selectedItemProperty().addListener((obs, old, newValue) -> {
             if (newValue != null) {
-                chatManager.clearNotification(newValue);
-                fileTransferManager.clearNotification(newValue);
+                chatManager.clearChat(newValue);
+                fileTransferManager.clear();
                 updateNotificationBadge();
             }
         });
@@ -161,6 +160,7 @@ public class UIManager {
             }
             event.consume();
         });
+
         chatArea.setOnDragDropped(event -> {
             var db = event.getDragboard();
             if (db.hasFiles()) {
@@ -168,7 +168,7 @@ public class UIManager {
                 if (target != null) {
                     TextInputDialog tagDialog = new TextInputDialog();
                     tagDialog.setHeaderText(getResourceString("enter_tags"));
-                    db.getFiles().forEach(file -> fileTransferManager.sendFileOrFolder(target, tagDialog, progressBar));
+                    db.getFiles().forEach(file -> fileTransferManager.send(target, tagDialog, progressBar));
                 } else {
                     notify(getResourceString("select_device"));
                 }
@@ -252,7 +252,6 @@ public class UIManager {
     }
 
     private void startUpdateListener() {
-        // Simulated update listener for P2P notifications
         new Thread(() -> {
             while (true) {
                 // Simulate receiving update notification
@@ -260,7 +259,7 @@ public class UIManager {
                 boolean isMainDeveloper = false; // Simulated third-party update
                 showLatestUpdateVersion(version, isMainDeveloper);
                 try {
-                    Thread.sleep(3600000); // Check hourly
+                    Thread.sleep(24 * 3600 * 1000); // Check daily to reduce annoyance
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -269,20 +268,24 @@ public class UIManager {
     }
 
     private void showLatestUpdateVersion(String version, boolean isMainDeveloper) {
-        Platform.runLater(() -> {
-            Label notification = new Label("New update available: v" + version);
-            notification.getStyleClass().add("update-notification");
-            if (!isMainDeveloper) {
-                notification.setText(notification.getText() + " (Third-party)");
-            }
-            StackPane.setAlignment(notification, Pos.TOP_CENTER);
-            layout.getChildren().add(notification);
-            FadeTransition fade = new FadeTransition(Duration.seconds(5), notification);
-            fade.setFromValue(1.0);
-            fade.setToValue(0.0);
-            fade.setOnFinished(e -> layout.getChildren().remove(notification));
-            fade.play();
-        });
+        String updateKey = version + "-" + isMainDeveloper;
+        if (!shownUpdates.contains(updateKey)) {
+            Platform.runLater(() -> {
+                Label notification = new Label("New update available: v" + version);
+                notification.getStyleClass().add("update-notification");
+                if (!isMainDeveloper) {
+                    notification.setText(notification.getText() + " (Third-party)");
+                }
+                StackPane.setAlignment(notification, Pos.TOP_CENTER);
+                layout.getChildren().add(notification);
+                FadeTransition fade = new FadeTransition(Duration.seconds(5), notification);
+                fade.setFromValue(1.0);
+                fade.setToValue(0.0);
+                fade.setOnFinished(e -> layout.getChildren().remove(notification));
+                fade.play();
+            });
+            shownUpdates.add(updateKey);
+        }
     }
 
     private void searchChatLog() {
@@ -347,14 +350,14 @@ public class UIManager {
             String originalName = versionName.split("\\.v")[0];
             File originalFile = new File(fileTransferManager.getSavePath(), originalName);
             try {
-                Files.copy(versionFile.toPath(), originalFile.getAbsolutePath(), StandardCopyOption.REPLACE_EXISTING);
-                databaseManager.logUpdateActivity("Restored file version: " + versionName + " to " + originalFile);
-                notify("File version restored: " + originalFile);
+                Files.copy(versionFile.toPath(), originalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                databaseManager.logActivity("Restored file version: " + versionName + " to " + originalFile.getName());
+                notify(getResourceString("file_version_restored") + originalFile.getName());
             } catch (IOException e) {
-                notify("Error downloading file version: " + e.getMessage());
+                notify("Error restoring file version: " + e.getMessage());
             }
         } else {
-            notify("File version not found");
+            notify(getResourceString("file_version_not_found"));
         }
     }
 

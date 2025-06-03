@@ -76,10 +76,32 @@ public class SecurityManager {
     }
 
     public PublicKey getPublicKey() throws Exception {
-        // Placeholder; load from keystore or resource in production
-        // Example: KeyStore ks = KeyStore.getInstance("JKS");
-        // ks.load(new FileInputStream(KEYSTORE_PATH), KEYSTORE_PASSWORD.toCharArray());
-        // return ks.getCertificate("alias").getPublicKey();
-        return null;
+        KeyStore ks = KeyStore.getInstance("JKS");
+        try (FileInputStream fis = new FileInputStream(KEYSTORE_PATH)) {
+            ks.load(fis, KEYSTORE_PASSWORD.toCharArray());
+        }
+        return ks.getCertificate("main_dev_alias").getPublicKey();
+    }
+
+    public void testInSandbox(File jarFile) throws IOException {
+        // Basic sandbox implementation using SecurityManager
+        System.setSecurityManager(new SecurityManager());
+        ProcessBuilder pb = new ProcessBuilder("java", "-Djava.security.manager", "-jar", jarFile.getAbsolutePath());
+        try {
+            Process process = pb.start();
+            // Monitor process for limited time (e.g., 10 seconds)
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroy();
+                throw new IOException("Sandbox test timed out");
+            }
+            if (process.exitValue() != 0) {
+                throw new IOException("Sandbox test failed");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Sandbox test interrupted", e);
+        } finally {
+            System.setSecurityManager(null); // Reset SecurityManager
+        }
     }
 }
